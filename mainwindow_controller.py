@@ -16,10 +16,14 @@ class MainWindowController(QMainWindow):
 
         # Camera variables
         self.cam = None
+        # TODO: сделать, чтобы таймер запускался один раз и не останавливался. 
+        # update_frame может выходить по return, пока его функционал не выполняется.
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
 
         # image_label
+        # TODO: QLabel - виджет текстовый. Рассмотреть альтернативы и реализовать ту, 
+        # что лучше всего подходит под обработку графики и кликов мыши.
         self.image_label = QLabel(self.ui.image_displayer)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setScaledContents(False)
@@ -68,14 +72,20 @@ class MainWindowController(QMainWindow):
         self.image_label.resize(self.ui.image_displayer.size())
 
     def toggle_camera(self):
+        # TODO: Растащить на 2 приватных метода содержимое if-else
         if self.cam is None:
             port_text = self.ui.camera_port_lineEdit.text()
             try:
+                # TODO: Предлагаю сделать выпадающий список с доступными портами (запрашивать их у сиситемы), 
+                # искать нужное наименование будет удобнее, и ошибок в названии не возникнет
                 port = int(port_text) if port_text.isdigit() else port_text
                 self.cam = ThreadSafeCameraReader(camera_id=port)
+                # TODO: вынести константу в файл конфигурации или хотя бы в атрибуты класа. 
+                # иначе FPS камеры будет больше, а таймер станет источником торможения.
                 self.timer.start(200)
                 self.ui.connect_camera_button.setText("Отключить камеру")
             except Exception as e:
+                # TODO: Логировать стектрейс целиком
                 self.show_error(f"Ошибка при открытии камеры: {str(e)}")
                 self.cam = None
                 self.clear_image_display()
@@ -84,17 +94,23 @@ class MainWindowController(QMainWindow):
             try:
                 self.cam.stop()
             except Exception:
+                # TODO: Логировать это исключение. Не обработанные исключения - 
+                # источник ошибок, которые очень долго не получается найти
                 pass
             self.cam = None
             self.ui.connect_camera_button.setText("Подключить")
             self.clear_image_display()
 
     def update_frame(self):
+        # TODO: разбить на несколько методов поменьше
         if not self.cam:
             return
         try:
             frame = self.cam.get_image()
         except Exception as e:
+            # TODO: Логировать стектрейс, а не только само исключение, 
+            # сделать переподключение к камере в несколько попыток, если система её видит в устройствах
+            # Переподключение надо вынести в класс камеры
             self.timer.stop()
             self.show_error(f"Ошибка чтения кадра с камеры: {str(e)}")
             self.clear_image_display()
@@ -104,6 +120,10 @@ class MainWindowController(QMainWindow):
             self.clear_image_display()
             return
 
+        # TODO: разобраться, от каких исключений здесь стоит try-except. 
+        # По идее сюда должен доходить нормальный кадр, то есть либо исключений не 
+        # возникнет, либо это конкретные OutOfBounds (и подобные), которые лучше разрешить алгоритмически, 
+        # не вызывая исключений. Сомневаюсь в целесообразности конструкции try-except.
         try:
             rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
@@ -125,6 +145,8 @@ class MainWindowController(QMainWindow):
             self.clear_image_display()
 
     def resizeEvent(self, event):
+        # TODO: все виджеты, в том числе image_label создавать в конструкторе. 
+        # Просто можно держать их disabled, либо с пустым содержимым.
         if hasattr(self, 'image_label') and self.image_label:
             self.image_label.resize(self.ui.image_displayer.size())
         super().resizeEvent(event)
@@ -169,9 +191,14 @@ class MainWindowController(QMainWindow):
         else: print('ERROR! Connect to CNC')
 
     def toggle_cnc_connection(self):
+        # TODO: метод очень большой, нужно выделить два приватных метода 
+        # Например __toggle_cnc_connect и __toggle_cnc_disconnect
         if not self.cnc_connected:
             port = self.ui.port_lineEdit.text()
             try:
+                # TODO: в идеале хранить константы в конфигурационном файле json, так как 
+                # baud_rate и другие параметры зависят от железа и могут меняться. 
+                # Потом не хочется искать это место в коде.
                 self.driver = CncMachineDriver(port, baud_rate=115200, timeout=2)
                 self.driver.open_serial_port()
                 self.driver.unlock()
@@ -180,6 +207,8 @@ class MainWindowController(QMainWindow):
                 self.ui.connect_cnc_button.setText("Отключить CNC")
                 print(f"Подключено к CNC на {port}")
             except Exception as e:
+                # TODO: либо обрабатывать конкретные типы исключений, 
+                # либо логировать стектрейс: например через traceback.format_exception
                 self.show_error(f"Не удалось подключиться к CNC: {str(e)}")
         else:
             self.ui.cur_x_label.setText("0.0")
@@ -194,6 +223,8 @@ class MainWindowController(QMainWindow):
 
     def show_error(self, message):
         print("ERROR:", message)
+        # TODO: Разобраться, почему скрытый импорт, и вытащить его наружу. 
+        # Если он здесь останется, весьма вероятны проблемы при сборке в exe
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
 
@@ -201,6 +232,7 @@ class MainWindowController(QMainWindow):
         if self.cam:
             self.cam.stop()
         if self.driver:
+            # TODO: применять уже существующий метод zero_all
             self.driver.move_x(0)
             self.driver.move_y(0)
             self.driver.close_serial_port()
