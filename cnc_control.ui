@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>884</width>
-    <height>539</height>
+    <height>533</height>
    </rect>
   </property>
   <property name="maximumSize">
@@ -33,6 +33,12 @@
     </item>
     <item row="0" column="1">
      <widget class="QGroupBox" name="joystic_groupbox">
+      <property name="maximumSize">
+       <size>
+        <width>380</width>
+        <height>320</height>
+       </size>
+      </property>
       <property name="title">
        <string/>
       </property>
@@ -265,6 +271,12 @@
     </item>
     <item row="1" column="0">
      <widget class="QGroupBox" name="camera_settings_groupbox">
+      <property name="maximumSize">
+       <size>
+        <width>480</width>
+        <height>189</height>
+       </size>
+      </property>
       <property name="title">
        <string>Настройки камеры</string>
       </property>
@@ -294,19 +306,6 @@
         <widget class="QFontComboBox" name="camera_mode_groupbox"/>
        </item>
        <item>
-        <spacer name="verticalSpacer">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>40</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
         <widget class="QPushButton" name="connect_camera_button">
          <property name="text">
           <string>подключить</string>
@@ -318,6 +317,12 @@
     </item>
     <item row="1" column="1">
      <widget class="QGroupBox" name="cnc_settings_groupbox">
+      <property name="maximumSize">
+       <size>
+        <width>380</width>
+        <height>189</height>
+       </size>
+      </property>
       <property name="title">
        <string>Настройки контроллера станка</string>
       </property>
