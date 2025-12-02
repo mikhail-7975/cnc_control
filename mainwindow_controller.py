@@ -1,10 +1,12 @@
 import sys
 import cv2
+import time
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 from mainwindow_ui import Ui_MainWindow  # Generated UI file
-
+from cnc_control.cnc_lib.new_machine_lib import CncMachineDriver
+from cnc_control.camera.camera_reader import ThreadSafeCameraReader
 
 class MainWindowController(QMainWindow):
     def __init__(self):
@@ -13,12 +15,20 @@ class MainWindowController(QMainWindow):
         self.ui.setupUi(self)
 
         # Camera variables
-        self.cap = None
+        self.cam = None
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
 
-        # CNC-related variables (placeholder for serial connection)
+        # image_label
+        self.image_label = QLabel(self.ui.image_displayer)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setScaledContents(False)
+        self.image_label.resize(self.ui.image_displayer.size())
+        self.clear_image_display()
+
+        # CNC-related variables
         self.cnc_connected = False
+        self.driver = None
 
         # Connect signals
         self.setup_connections()
@@ -45,60 +55,74 @@ class MainWindowController(QMainWindow):
         self.ui.pushButton_2.clicked.connect(lambda: self.zero_axis('Y'))       # zero Y
         self.ui.pushButton_3.clicked.connect(self.zero_all)                     # zero all
 
+        self.ui.cur_x_label.setText("0.0")
+        self.ui.cur_y_label.setText("0.0")
+
         # CNC connection
         self.ui.connect_cnc_button.clicked.connect(self.toggle_cnc_connection)
 
+    def clear_image_display(self):
+        self.image_label.clear()
+        self.ui.image_displayer.setStyleSheet("background-color: black;")
+        self.image_label.move(0, 0)
+        self.image_label.resize(self.ui.image_displayer.size())
+
     def toggle_camera(self):
-        if self.cap is None or not self.cap.isOpened():
+        if self.cam is None:
             port_text = self.ui.camera_port_lineEdit.text()
             try:
                 port = int(port_text) if port_text.isdigit() else port_text
-                self.cap = cv2.VideoCapture(port)
-                if self.cap.isOpened():
-                    self.ui.connect_camera_button.setText("Отключить камеру")
-                    self.timer.start(30)  # ~30 FPS
-                else:
-                    self.show_error("Не удалось открыть камеру на порту: " + str(port))
-                    self.cap = None
+                self.cam = ThreadSafeCameraReader(camera_id=port)
+                self.timer.start(200)
+                self.ui.connect_camera_button.setText("Отключить камеру")
             except Exception as e:
                 self.show_error(f"Ошибка при открытии камеры: {str(e)}")
-                self.cap = None
+                self.cam = None
+                self.clear_image_display()
         else:
             self.timer.stop()
-            self.cap.release()
-            self.cap = None
+            try:
+                self.cam.stop()
+            except Exception:
+                pass
+            self.cam = None
             self.ui.connect_camera_button.setText("Подключить")
-            # Clear display
-            self.ui.image_displayer.setStyleSheet("background-color: black;")
+            self.clear_image_display()
 
     def update_frame(self):
-        if self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                # Convert OpenCV BGR to RGB
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-                pixmap = QPixmap.fromImage(qt_image)
-                # Scale to fit displayer while keeping aspect ratio
-                scaled_pixmap = pixmap.scaled(
-                    self.ui.image_displayer.width(),
-                    self.ui.image_displayer.height(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                # Display using QLabel if not already set
-                if not hasattr(self, 'image_label') or not self.image_label.parent():
-                    self.image_label = QLabel(self.ui.image_displayer)
-                    self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.image_label.resize(self.ui.image_displayer.size())
-                    self.image_label.show()
-                self.image_label.setPixmap(scaled_pixmap)
-                self.image_label.resize(self.ui.image_displayer.size())
-            else:
-                self.timer.stop()
-                self.show_error("Ошибка чтения кадра с камеры")
+        if not self.cam:
+            return
+        try:
+            frame = self.cam.get_image()
+        except Exception as e:
+            self.timer.stop()
+            self.show_error(f"Ошибка чтения кадра с камеры: {str(e)}")
+            self.clear_image_display()
+            return
+
+        if frame is None or getattr(frame, "size", 0) == 0:
+            self.clear_image_display()
+            return
+
+        try:
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            scaled_pixmap = pixmap.scaled(
+                self.ui.image_displayer.width(),
+                self.ui.image_displayer.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            self.image_label.resize(self.ui.image_displayer.size())
+            self.ui.image_displayer.setStyleSheet("")
+        except Exception as e:
+            self.timer.stop()
+            self.show_error(f"Ошибка при отображении кадра: {str(e)}")
+            self.clear_image_display()
 
     def resizeEvent(self, event):
         if hasattr(self, 'image_label') and self.image_label:
@@ -106,59 +130,80 @@ class MainWindowController(QMainWindow):
         super().resizeEvent(event)
 
     def move_axis(self, axis, steps):
-        # TODO: Send G-code or command to CNC (e.g., via serial)
-        print(f"Moving {axis} by {steps} units")
-        # Example placeholder:
-        # if self.cnc_connected:
-        #     self.serial.write(f"G91\nG0 {axis}{steps}\nG90\n".encode())
-
-        # Update UI position labels (mock values for demo)
-        if axis == 'X':
-            current = float(self.ui.cur_x_label.text() or "0")
-            self.ui.cur_x_label.setText(str(round(current + steps, 2)))
-        elif axis == 'Y':
-            current = float(self.ui.cur_y_label.text() or "0")
-            self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+        if self.driver:
+            print(f"Moving {axis} by {steps} mm")
+            if axis == 'X':
+                current = float(self.ui.cur_x_label.text() or "0")
+                if current + steps <= 0:
+                    self.driver.move_x_rel(int(steps))
+                    self.ui.cur_x_label.setText(str(round(current + steps, 2)))
+                else:
+                    self.ui.cur_x_label.setText("0.0")
+                    self.driver.move_x(0)
+                    print('Out of range axis X')
+            # TODO: Make out of range checker for y axis
+            elif axis == 'Y':
+                self.driver.move_y_rel(int(steps))
+                current = float(self.ui.cur_y_label.text() or "0")
+                self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+        else: print('ERROR! Connect to CNC')
 
     def zero_axis(self, axis):
-        if axis == 'X':
-            self.ui.cur_x_label.setText("0.0")
-        elif axis == 'Y':
-            self.ui.cur_y_label.setText("0.0")
-        print(f"Zeroing {axis} axis")
+        if self.driver:
+            if axis == 'X':        
+                self.ui.cur_x_label.setText("0.0")
+                self.driver.move_x(0)
+            elif axis == 'Y':
+                self.ui.cur_y_label.setText("0.0")
+                self.driver.move_y(0)
+            print(f"Zeroing {axis} axis")
+        else: print('ERROR! Connect to CNC')
 
     def zero_all(self):
-        self.ui.cur_x_label.setText("0.0")
-        self.ui.cur_y_label.setText("0.0")
-        print("Zeroing all axes")
+        if self.driver:
+            self.driver.move_x(0)
+            self.driver.move_y(0)
+            self.ui.cur_x_label.setText("0.0")
+            self.ui.cur_y_label.setText("0.0")
+            print("Zeroing all axes")
+        else: print('ERROR! Connect to CNC')
 
     def toggle_cnc_connection(self):
         if not self.cnc_connected:
             port = self.ui.port_lineEdit.text()
             try:
-                # TODO: Open serial connection to CNC
-                # Example: self.serial = serial.Serial(port, 115200, timeout=1)
+                self.driver = CncMachineDriver(port, baud_rate=115200, timeout=2)
+                self.driver.open_serial_port()
+                self.driver.unlock()
+                self.driver.set_units_and_mode()
                 self.cnc_connected = True
                 self.ui.connect_cnc_button.setText("Отключить CNC")
                 print(f"Подключено к CNC на {port}")
             except Exception as e:
                 self.show_error(f"Не удалось подключиться к CNC: {str(e)}")
         else:
-            # TODO: Close serial
+            self.ui.cur_x_label.setText("0.0")
+            self.ui.cur_y_label.setText("0.0")
+            self.driver.move_x(0)
+            self.driver.move_y(0)
             self.cnc_connected = False
             self.ui.connect_cnc_button.setText("Подключить")
+            self.driver.close_serial_port()
+            self.driver = None
             print("CNC отключён")
 
     def show_error(self, message):
         print("ERROR:", message)
-        # Optional: Use QMessageBox for GUI error
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
 
     def closeEvent(self, event):
-        if self.cap:
-            self.cap.release()
-        # TODO: Close CNC serial if open
+        if self.cam:
+            self.cam.stop()
+        if self.driver:
+            self.driver.move_x(0)
+            self.driver.move_y(0)
+            self.driver.close_serial_port()
         event.accept()
 
 

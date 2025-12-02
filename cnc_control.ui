@@ -279,7 +279,7 @@
        <item>
         <widget class="QLineEdit" name="camera_port_lineEdit">
          <property name="text">
-          <string>/dev/video2</string>
+          <string>/dev/video4</string>
          </property>
         </widget>
        </item>
