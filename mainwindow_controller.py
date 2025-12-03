@@ -37,7 +37,7 @@ class MainWindowController(QMainWindow):
         self.timer.start(self.CAMERA_TIMER_INTERVAL_MS)
         logger.debug("Frame update timer started (single persistent timer).")
 
-        # image_label: QLabel подходит для отображения QPixmap.
+        # image_label: 
         self.image_label = QLabel(self.ui.image_displayer)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setScaledContents(False)
@@ -297,12 +297,10 @@ class MainWindowController(QMainWindow):
 
     def show_error(self, message):
         logger.error("ERROR: %s", message)
-        # QMessageBox импортируем локально, чтобы избежать проблем со скрытым импортом при сборке
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
 
     def closeEvent(self, event):
-        # при закрытии корректно освобождаем ресурсы
         try:
             if self.cam:
                 try:
@@ -311,7 +309,6 @@ class MainWindowController(QMainWindow):
                     logger.exception("Ошибка при остановке камеры в closeEvent")
             if self.driver:
                 try:
-                    # используем zero_all если хотим ту же логику
                     self.driver.move_x(0)
                     self.driver.move_y(0)
                     self.driver.close_serial_port()
