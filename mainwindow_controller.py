@@ -265,11 +265,11 @@ class MainWindowController(QMainWindow):
     def _disconnect_cnc(self):
         try:
             if self.driver:
-                try:
-                    self.driver.move_x(0)
-                    self.driver.move_y(0)
-                except Exception:
-                    logger.debug("Ошибка при попытке вернуть оси в 0 перед закрытием (игнорируется).")
+                # try:
+                #     self.driver.move_x(0)
+                #     self.driver.move_y(0)
+                # except Exception:
+                #     logger.debug("Ошибка при попытке вернуть оси в 0 перед закрытием (игнорируется).")
                 try:
                     self.driver.close_serial_port()
                 except Exception:
