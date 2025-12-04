@@ -3,7 +3,7 @@ import cv2
 import time
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout
+    QAbstractItemView, QVBoxLayout, QFileDialog
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
@@ -27,6 +27,11 @@ class MainWindowController(QMainWindow):
         self.image_points_file_control = TrackFileControlWidget()
         self.image_points_file_control.setMaximumSize(100, 40)
         self.ui.verticalLayout_3.addWidget(self.image_points_file_control)
+
+        self.image_points_currnet_filename = None
+        self.image_points_file_control.new_file_tool_button.clicked.connect(self.__new_file_button_clicked)
+        self.image_points_file_control.open_file_tool_button.clicked.connect(self.__open_file_button_clicked)
+        self.image_points_file_control.save_file_tool_button.clicked.connect(self.__save_file_button_clicked)
 
         # For component coordinates
         self.component_coordinates_list = QListWidget()
@@ -53,6 +58,8 @@ class MainWindowController(QMainWindow):
         # CNC-related variables
         self.cnc_connected = False
         self.driver = None
+
+        self.take_image_current_filename = "keypoints/"
 
         # Connect signals
         self.setup_connections()
@@ -262,6 +269,41 @@ class MainWindowController(QMainWindow):
         print("ERROR:", message)
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
+
+    def __new_file_button_clicked(self):
+        filename, _ = QFileDialog.getSaveFileName(
+            parent=self,                            # Parent widget
+            caption="Select a File",                  # Dialog window title
+            directory="keypoints",                               # Default directory (empty string defaults to current working directory)
+            filter="Text (*.txt)" # File filters
+        )
+        self.take_image_current_filename = filename if filename else "noname_image_points"
+        # TODO: warning for existing file
+        self.take_image_points_list.clear()
+
+    def __open_file_button_clicked(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            parent=self,                            # Parent widget
+            caption="Select a File",                  # Dialog window title
+            directory="keypoints",                               # Default directory (empty string defaults to current working directory)
+            filter="Text (*.txt)" # File filters
+        )
+        if not filename:
+            return
+        self.take_image_current_filename = filename
+        self.take_image_points_list.clear()
+        with open(filename, 'r') as f:
+            items_from_file = f.read().splitlines()
+        self.take_image_points_list.addItems(items_from_file)
+
+        # TODO: warning for existing file
+
+
+    def __save_file_button_clicked(self):
+        points = [self.take_image_points_list.item(i).text() for i in range(self.take_image_points_list.count())]
+        with open (self.take_image_current_filename+"_.txt", 'w') as f:
+            f.write('\n'.join(points))
+
 
     def closeEvent(self, event):
         if self.cam:
