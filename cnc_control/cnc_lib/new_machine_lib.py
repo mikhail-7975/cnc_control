@@ -37,7 +37,7 @@ class CncMachineDriver:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.home()
         time.sleep(1)
-        self._send_gcode("$X")
+        self._send_gcode("$H")
         self.close_serial_port()
 
     # --- Подключение ---
@@ -61,7 +61,7 @@ class CncMachineDriver:
     # --- Настройка GRBL ---
     def unlock(self):
         """Разблокировка GRBL"""
-        self._send_gcode("$X")
+        self._send_gcode("$H")
         self._log_response("GRBL Unlock")
 
     def set_units_and_mode(self):

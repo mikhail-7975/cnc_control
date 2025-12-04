@@ -1,29 +1,49 @@
 import sys
 import cv2
 import time
+import traceback
+import logging
+
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
-from mainwindow_ui import Ui_MainWindow  # Generated UI file
+from mainwindow_ui import Ui_MainWindow 
 from cnc_control.cnc_lib.new_machine_lib import CncMachineDriver
 from cnc_control.camera.camera_reader import ThreadSafeCameraReader
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
 class MainWindowController(QMainWindow):
+    CAMERA_TIMER_INTERVAL_MS = 200
+    CAMERA_RECONNECT_ATTEMPTS = 5
+    CNC_BAUD_RATE = 115200
+    CNC_TIMEOUT = 2
+
     def __init__(self):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
 
-        # Camera variables
+        # --- Camera related ---
         self.cam = None
-        self.timer = QTimer()
+        self.reconnect_attempts = 0
+        self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
+        self.timer.start(self.CAMERA_TIMER_INTERVAL_MS)
+        logger.debug("Frame update timer started (single persistent timer).")
 
-        # image_label
+        # image_label: 
         self.image_label = QLabel(self.ui.image_displayer)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setScaledContents(False)
+        self.image_label.move(0, 0)
         self.image_label.resize(self.ui.image_displayer.size())
+
         self.clear_image_display()
 
         # CNC-related variables
@@ -36,6 +56,7 @@ class MainWindowController(QMainWindow):
     def setup_connections(self):
         # Camera
         self.ui.connect_camera_button.clicked.connect(self.toggle_camera)
+
         # Joystick buttons (X-axis)
         self.ui.left_1_button.clicked.connect(lambda: self.move_axis('X', -1))
         self.ui.left_10_button.clicked.connect(lambda: self.move_axis('X', -10))
@@ -43,22 +64,23 @@ class MainWindowController(QMainWindow):
         self.ui.right_1_button.clicked.connect(lambda: self.move_axis('X', 1))
         self.ui.right_10_button.clicked.connect(lambda: self.move_axis('X', 10))
         self.ui.right_50_button.clicked.connect(lambda: self.move_axis('X', 50))
+
         # Joystick buttons (Y-axis)
         self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
         self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
         self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
-        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Z', 1))    # Assuming V = Z
-        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Z', 10))
-        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Z', 50))
-        # Zeroing buttons
-        self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))         # zero X
-        self.ui.pushButton_2.clicked.connect(lambda: self.zero_axis('Y'))       # zero Y
-        self.ui.pushButton_3.clicked.connect(self.zero_all)                     # zero all
 
+
+        # Zeroing buttons
+        self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))
+        self.ui.pushButton_2.clicked.connect(lambda: self.zero_axis('Y'))
+        self.ui.pushButton_3.clicked.connect(self.zero_all)
+
+        # Initial labels
         self.ui.cur_x_label.setText("0.0")
         self.ui.cur_y_label.setText("0.0")
 
-        # CNC connection
+        # CNC connection button
         self.ui.connect_cnc_button.clicked.connect(self.toggle_cnc_connection)
 
     def clear_image_display(self):
@@ -67,27 +89,45 @@ class MainWindowController(QMainWindow):
         self.image_label.move(0, 0)
         self.image_label.resize(self.ui.image_displayer.size())
 
-    def toggle_camera(self):
-        if self.cam is None:
-            port_text = self.ui.camera_port_lineEdit.text()
-            try:
+    def _connect_camera(self, port_text: str):
+        try:
+            # TODO: Предлагаю сделать выпадающий список с доступными портами (запрашивать их у сиситемы), 
+            if port_text and port_text.strip():
+                port_text = port_text.strip()
                 port = int(port_text) if port_text.isdigit() else port_text
-                self.cam = ThreadSafeCameraReader(camera_id=port)
-                self.timer.start(200)
-                self.ui.connect_camera_button.setText("Отключить камеру")
-            except Exception as e:
-                self.show_error(f"Ошибка при открытии камеры: {str(e)}")
-                self.cam = None
-                self.clear_image_display()
-        else:
-            self.timer.stop()
-            try:
-                self.cam.stop()
-            except Exception:
-                pass
+
+            logger.debug("Trying to create ThreadSafeCameraReader for port: %s", str(port))
+            self.cam = ThreadSafeCameraReader(camera_id=port)
+            self.reconnect_attempts = 0
+            self.ui.connect_camera_button.setText("Отключить камеру")
+            logger.info("Camera connected on %s", str(port))
+        except Exception as e:
+            logger.error("Ошибка при открытии камеры: %s\n%s", e, traceback.format_exc())
+            self.show_error(f"Ошибка при открытии камеры: {str(e)}")
             self.cam = None
+            self.clear_image_display()
+
+    def _disconnect_camera(self):
+        try:
+            if self.cam:
+                try:
+                    self.cam.stop()
+                except Exception:
+                    logger.exception("Ошибка при остановке камеры (ignored).")
+                self.cam = None
             self.ui.connect_camera_button.setText("Подключить")
             self.clear_image_display()
+            logger.info("Camera disconnected")
+        except Exception:
+            logger.exception("Ошибка при отключении камеры")
+
+    def toggle_camera(self):
+        if self.cam is None:
+            port_text = getattr(self.ui, "camera_port_lineEdit", None)
+            port_text = port_text.text() if port_text else ""
+            self._connect_camera(port_text)
+        else:
+            self._disconnect_camera()
 
     def update_frame(self):
         if not self.cam:
@@ -95,10 +135,34 @@ class MainWindowController(QMainWindow):
         try:
             frame = self.cam.get_image()
         except Exception as e:
-            self.timer.stop()
-            self.show_error(f"Ошибка чтения кадра с камеры: {str(e)}")
-            self.clear_image_display()
-            return
+            logger.error("Ошибка чтения кадра с камеры: %s\n%s", str(e), traceback.format_exc())
+            self.reconnect_attempts += 1
+            if self.reconnect_attempts <= self.CAMERA_RECONNECT_ATTEMPTS:
+                logger.info("Попытка пере-подключения к камере (%d/%d)...",
+                            self.reconnect_attempts, self.CAMERA_RECONNECT_ATTEMPTS)
+                # Попытка пересоздать объект камеры
+                try:
+                    cam_id = getattr(self.cam, 'camera_id', None)
+                except Exception:
+                    cam_id = None
+                try:
+                    self.cam.stop()
+                except Exception:
+                    logger.debug("Ignoring exception on cam.stop during reconnect.")
+                self.cam = None
+                # Попробуем пересоздать
+                try:
+                    self.cam = ThreadSafeCameraReader(camera_id=cam_id)
+                    logger.info("Реконнект: создан новый ThreadSafeCameraReader(%s)", str(cam_id))
+                except Exception:
+                    logger.exception("Ошибка при попытке реконнекта камеры")
+                # ждём следующий тик
+                return
+            else:
+                # превысили попытки — показываем ошибку UI
+                self.show_error(f"Ошибка чтения кадра с камеры: {str(e)}. Автоматические попытки восстановления исчерпаны.")
+                self.clear_image_display()
+                return
 
         if frame is None or getattr(frame, "size", 0) == 0:
             self.clear_image_display()
@@ -120,7 +184,7 @@ class MainWindowController(QMainWindow):
             self.image_label.resize(self.ui.image_displayer.size())
             self.ui.image_displayer.setStyleSheet("")
         except Exception as e:
-            self.timer.stop()
+            logger.error("Ошибка при отображении кадра: %s\n%s", e, traceback.format_exc())
             self.show_error(f"Ошибка при отображении кадра: {str(e)}")
             self.clear_image_display()
 
@@ -130,81 +194,128 @@ class MainWindowController(QMainWindow):
         super().resizeEvent(event)
 
     def move_axis(self, axis, steps):
-        if self.driver:
-            print(f"Moving {axis} by {steps} mm")
+        if not self.driver:
+            logger.warning("Попытка управления осями без подключения к CNC")
+            return
+        try:
+            logger.debug("Moving %s by %s mm", axis, steps)
+            current = float(self.ui.cur_x_label.text() or "0")
+            new_pos = current + steps
+
             if axis == 'X':
-                current = float(self.ui.cur_x_label.text() or "0")
-                if current + steps <= 0:
-                    self.driver.move_x_rel(int(steps))
-                    self.ui.cur_x_label.setText(str(round(current + steps, 2)))
-                else:
-                    self.ui.cur_x_label.setText("0.0")
-                    self.driver.move_x(0)
-                    print('Out of range axis X')
-            # TODO: Make out of range checker for y axis
+                self.driver.move_x_rel(int(steps))
+                self.ui.cur_x_label.setText(str(round(new_pos, 2)))
             elif axis == 'Y':
-                self.driver.move_y_rel(int(steps))
-                current = float(self.ui.cur_y_label.text() or "0")
-                self.ui.cur_y_label.setText(str(round(current + steps, 2)))
-        else: print('ERROR! Connect to CNC')
+                    self.driver.move_y_rel(int(steps))
+                    self.ui.cur_y_label.setText(str(round(new_pos, 2)))
+            else:
+                logger.warning("Неизвестная ось: %s", axis)
+        except Exception as e:
+            logger.exception("Ошибка при перемещении оси %s: %s", axis, e)
+            self.show_error(f"Ошибка при перемещении оси {axis}: {str(e)}")
 
     def zero_axis(self, axis):
-        if self.driver:
-            if axis == 'X':        
+        if not self.driver:
+            logger.warning("Попытка управления осями без подключения к CNC")
+            return
+        try:
+            if axis == 'X':
                 self.ui.cur_x_label.setText("0.0")
                 self.driver.move_x(0)
             elif axis == 'Y':
                 self.ui.cur_y_label.setText("0.0")
                 self.driver.move_y(0)
-            print(f"Zeroing {axis} axis")
-        else: print('ERROR! Connect to CNC')
+            logger.info("Zeroing %s axis", axis)
+        except Exception:
+            logger.exception("Ошибка при занулении оси %s", axis)
+            self.show_error(f"Ошибка при занулении оси {axis}")
 
     def zero_all(self):
-        if self.driver:
+        if not self.driver:
+            logger.warning("Попытка управления осями без подключения к CNC")
+            return
+        try:
             self.driver.move_x(0)
             self.driver.move_y(0)
             self.ui.cur_x_label.setText("0.0")
             self.ui.cur_y_label.setText("0.0")
-            print("Zeroing all axes")
-        else: print('ERROR! Connect to CNC')
+            logger.info("Zeroing all axes")
+        except Exception:
+            logger.exception("Ошибка при занулении всех осей")
+            self.show_error("Ошибка при занулении всех осей")
 
-    def toggle_cnc_connection(self):
-        if not self.cnc_connected:
-            port = self.ui.port_lineEdit.text()
-            try:
-                self.driver = CncMachineDriver(port, baud_rate=115200, timeout=2)
-                self.driver.open_serial_port()
-                self.driver.unlock()
-                self.driver.set_units_and_mode()
-                self.cnc_connected = True
-                self.ui.connect_cnc_button.setText("Отключить CNC")
-                print(f"Подключено к CNC на {port}")
-            except Exception as e:
-                self.show_error(f"Не удалось подключиться к CNC: {str(e)}")
-        else:
-            self.ui.cur_x_label.setText("0.0")
-            self.ui.cur_y_label.setText("0.0")
-            self.driver.move_x(0)
-            self.driver.move_y(0)
+    def _connect_cnc(self, port: str):
+        try:
+            if not port or not str(port).strip():
+                raise ValueError("Порт для CNC не указан.")
+            logger.debug("Попытка подключения к CNC на порту %s", port)
+            self.driver = CncMachineDriver(port, baud_rate=self.CNC_BAUD_RATE, timeout=self.CNC_TIMEOUT)
+            self.driver.open_serial_port()
+            self.driver.unlock()
+            self.driver.set_units_and_mode()
+            self.cnc_connected = True
+            self.ui.connect_cnc_button.setText("Отключить CNC")
+            logger.info("Подключено к CNC на %s", port)
+        except Exception as e:
+            logger.error("Не удалось подключиться к CNC: %s\n%s", str(e), traceback.format_exc())
+            self.driver = None
+            self.cnc_connected = False
+            self.show_error(f"Не удалось подключиться к CNC: {str(e)}")
+
+    def _disconnect_cnc(self):
+        try:
+            if self.driver:
+                # try:
+                #     self.driver.move_x(0)
+                #     self.driver.move_y(0)
+                # except Exception:
+                #     logger.debug("Ошибка при попытке вернуть оси в 0 перед закрытием (игнорируется).")
+                try:
+                    self.driver.close_serial_port()
+                except Exception:
+                    logger.exception("Ошибка при закрытии serial port")
+                self.driver = None
             self.cnc_connected = False
             self.ui.connect_cnc_button.setText("Подключить")
-            self.driver.close_serial_port()
-            self.driver = None
-            print("CNC отключён")
+            self.ui.cur_x_label.setText("0.0")
+            self.ui.cur_y_label.setText("0.0")
+            logger.info("CNC отключён")
+        except Exception:
+            logger.exception("Ошибка при отключении CNC")
+            self.show_error("Ошибка при отключении CNC")
+
+    def toggle_cnc_connection(self):
+        """
+        Разделяем поведение на connect / disconnect.
+        """
+        if not self.cnc_connected:
+            port = getattr(self.ui, "port_lineEdit", None)
+            port_text = port.text() if port else ""
+            self._connect_cnc(port_text)
+        else:
+            self._disconnect_cnc()
 
     def show_error(self, message):
-        print("ERROR:", message)
+        logger.error("ERROR: %s", message)
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
 
     def closeEvent(self, event):
-        if self.cam:
-            self.cam.stop()
-        if self.driver:
-            self.driver.move_x(0)
-            self.driver.move_y(0)
-            self.driver.close_serial_port()
-        event.accept()
+        try:
+            if self.cam:
+                try:
+                    self.cam.stop()
+                except Exception:
+                    logger.exception("Ошибка при остановке камеры в closeEvent")
+            if self.driver:
+                try:
+                    self.driver.move_x(0)
+                    self.driver.move_y(0)
+                    self.driver.close_serial_port()
+                except Exception:
+                    logger.exception("Ошибка при закрытии CNC в closeEvent")
+        finally:
+            event.accept()
 
 
 # Optional: Run standalone for testing
