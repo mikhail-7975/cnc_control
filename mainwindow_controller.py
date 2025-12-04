@@ -52,6 +52,7 @@ class MainWindowController(QMainWindow):
         self.compose_inspection_report_button = QPushButton()
         self.compose_inspection_report_button.setFixedSize(100, 30)
         self.compose_inspection_report_button.setText("Отчёт")
+        self.compose_inspection_report_button.clicked.connect(self.__compose_report_from_file)
         self.ui.verticalLayout_3.addWidget(self.compose_inspection_report_button)
 
         # For component coordinates
@@ -416,6 +417,25 @@ class MainWindowController(QMainWindow):
         points = [self.take_image_points_list.item(i).text() for i in range(self.take_image_points_list.count())]
         with open (self.take_image_current_filename+"_.txt", 'w') as f:
             f.write('\n'.join(points))
+
+    def __compose_report_from_file(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            parent=self,                            # Parent widget
+            caption="Select a report File",                  # Dialog window title
+            directory="inspection_reports",                               # Default directory (empty string defaults to current working directory)
+            filter="All (*.*)" # File filters
+        )
+        if not filename:
+            return
+        print(filename)
+        inspection_map = self.__draw_inspection_map_by_report(filepath=filename)
+        self.__save_inspection_map(inspection_map)
+        
+    def __draw_inspection_map_by_report(self, filepath: str):
+        ...
+
+    def __save_inspection_map(self, img):
+        ...
 
 
     def closeEvent(self, event):
