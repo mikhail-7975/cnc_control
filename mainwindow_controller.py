@@ -10,7 +10,7 @@ from PyQt6.QtGui import QImage, QPixmap
 from mainwindow_ui import Ui_MainWindow  # Generated UI file
 from cnc_control.cnc_lib.new_machine_lib import CncMachineDriver
 from cnc_control.camera.camera_reader import ThreadSafeCameraReader
-
+from widgets_collection import TrackFileControlWidget
 
 class MainWindowController(QMainWindow):
     def __init__(self):
@@ -24,10 +24,18 @@ class MainWindowController(QMainWindow):
         self.take_image_points_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.ui.take_image_points_display_area.setWidget(self.take_image_points_list)
 
+        self.image_points_file_control = TrackFileControlWidget()
+        self.image_points_file_control.setMaximumSize(100, 40)
+        self.ui.verticalLayout_3.addWidget(self.image_points_file_control)
+
         # For component coordinates
         self.component_coordinates_list = QListWidget()
         self.component_coordinates_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.ui.component_coordinates_display_area.setWidget(self.component_coordinates_list)
+
+        self.component_coordinates_file_control = TrackFileControlWidget()
+        self.component_coordinates_file_control.setMaximumSize(100, 40)
+        self.ui.verticalLayout_4.addWidget(self.component_coordinates_file_control)
 
         # Camera variables
         self.cam = None
