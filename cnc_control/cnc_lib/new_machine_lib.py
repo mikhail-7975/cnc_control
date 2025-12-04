@@ -23,21 +23,18 @@ class CncMachineDriver:
         self.X = 0
         self.Y = 0
 
-    # --- Контекстный менеджер ---
     def __enter__(self):
         self.open_serial_port()
         self.unlock()
 
-        # Сброс координатных смещений:
-        self._send_gcode("$RST=#")           # сброс WCO
-        self._send_gcode("G10 P0 L20 X0 Y0") # текущая точка = (0,0)
-        # self._send_gcode("$H")
+        self._send_gcode("$RST=#")           
+        self._send_gcode("G10 P0 L20 X0 Y0") 
         self.set_units_and_mode()
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.home()
         time.sleep(1)
-        self._send_gcode("$X")
+        self._send_gcode("$H")
         self.close_serial_port()
 
     # --- Подключение ---
@@ -61,7 +58,7 @@ class CncMachineDriver:
     # --- Настройка GRBL ---
     def unlock(self):
         """Разблокировка GRBL"""
-        self._send_gcode("$X")
+        self._send_gcode("$H")
         self._log_response("GRBL Unlock")
 
     def set_units_and_mode(self):
@@ -71,27 +68,23 @@ class CncMachineDriver:
         self._log_response("Units = mm, Absolute mode")
 
     # --- Основные команды движения ---
-    def move_x(self, x_mm, speed=1000):
-        self._check_limits(x_mm, axis='X')
+    def move_x(self, x_mm, speed=7000):
         command = f"G1 X{x_mm} F{speed}"
         self._execute_move(command)
         self.X = x_mm
 
-    def move_y(self, y_mm, speed=1000):
-        self._check_limits(y_mm, axis='Y')
+    def move_y(self, y_mm, speed=7000):
         command = f"G1 Y{y_mm} F{speed}"
         self._execute_move(command)
         self.Y = y_mm
 
-    def move_xy(self, x_mm, y_mm, speed=1000):
-        self._check_limits(x_mm, axis='X')
-        self._check_limits(y_mm, axis='Y')
+    def move_xy(self, x_mm, y_mm, speed=7000):
         command = f"G1 X{x_mm} Y{y_mm} F{speed}"
         self._execute_move(command)
         self.X, self.Y = x_mm, y_mm
 
     # --- Относительное перемещение ---
-    def move_x_rel(self, dx_mm, speed=1000):
+    def move_x_rel(self, dx_mm, speed=7000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 X{dx_mm} F{speed}"
@@ -99,7 +92,7 @@ class CncMachineDriver:
         self.X += dx_mm
         self._send_gcode("G90")
 
-    def move_y_rel(self, dy_mm, speed=1000):
+    def move_y_rel(self, dy_mm, speed=7000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 Y{dy_mm} F{speed}"
@@ -107,7 +100,7 @@ class CncMachineDriver:
         self.Y += dy_mm
         self._send_gcode("G90")
 
-    def move_xy_rel(self, dx_mm, dy_mm, speed=1000):
+    def move_xy_rel(self, dx_mm, dy_mm, speed=7000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 X{dx_mm} Y{dy_mm} F{speed}"
@@ -121,13 +114,6 @@ class CncMachineDriver:
         self._send_gcode("$H")
         # self._wait_for_idle()
         self.X, self.Y = 0, 0
-
-    # --- Вспомогательные ---
-    def _check_limits(self, value, axis):
-        if axis == 'X' and not (self.X_MIN <= value <= self.X_MAX):
-            raise ValueError(f"X must be in range [{self.X_MIN}, {self.X_MAX}]")
-        if axis == 'Y' and not (self.Y_MIN <= value <= self.Y_MAX):
-            raise ValueError(f"Y must be in range [{self.Y_MIN}, {self.Y_MAX}]")
 
     def _execute_move(self, command):
         self._send_gcode(command)
@@ -147,6 +133,9 @@ class CncMachineDriver:
             
                 if line.startswith("<Idle"):
                     self.logger.info("GRBL is Idle. Movement complete.")
+                    return
+                if "ALARM" in line:
+                    self.logger.info("Stopper is reached.")
                     return
         raise TimeoutError("GRBL did not return to Idle state")
     

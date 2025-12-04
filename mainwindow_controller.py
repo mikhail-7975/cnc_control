@@ -70,12 +70,12 @@ class MainWindowController(QMainWindow):
         self.ui.right_50_button.clicked.connect(lambda: self.move_axis('X', 50))
 
         # Joystick buttons (Y-axis)
-        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
-        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
-        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
-        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Z', 1))    # Assuming V = Z
-        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Z', 10))
-        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Z', 50))
+        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', -1))
+        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', -10))
+        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', -50))
+        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Y', 1))    # Assuming V = Z
+        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Y', 10))
+        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Y', 50))
 
         # Zeroing buttons
         self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))         # zero X
@@ -195,20 +195,24 @@ class MainWindowController(QMainWindow):
 
     def move_axis(self, axis, steps):
         if self.driver:
-            print(f"Moving {axis} by {steps} mm")
+            
             if axis == 'X':
                 current = float(self.ui.cur_x_label.text() or "0")
-                if current + steps <= 0:
+                if current + steps >= 0 and current + steps < 285:
+                    print(f"Moving {axis} by {steps} mm")
                     self.driver.move_x_rel(int(steps))
                     self.ui.cur_x_label.setText(str(round(current + steps, 2)))
                 else:
-                    self.ui.cur_x_label.setText("0.0")
-                    self.driver.move_x(0)
-                    print('Out of range axis X')
+                    print("ERROR! Out of range")
+                
             elif axis == 'Y':
-                self.driver.move_y_rel(int(steps))
                 current = float(self.ui.cur_y_label.text() or "0")
-                self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+                if current + steps >= 0 and current + steps < 260:
+                    print(f"Moving {axis} by {steps} mm")
+                    self.driver.move_y_rel(int(steps))
+                    self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+                else:
+                    print("ERROR! Out of range")
         else:
             print('ERROR! Connect to CNC')
 
