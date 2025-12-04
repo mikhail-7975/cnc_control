@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindowController(QMainWindow):
-    CAMERA_TIMER_INTERVAL_MS = 200
+    CAMERA_TIMER_INTERVAL_MS = 33
     CAMERA_RECONNECT_ATTEMPTS = 5
     CNC_BAUD_RATE = 115200
     CNC_TIMEOUT = 2
@@ -104,12 +104,12 @@ class MainWindowController(QMainWindow):
         self.ui.right_50_button.clicked.connect(lambda: self.move_axis('X', 50))
 
         # Joystick buttons (Y-axis)
-        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
-        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
-        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
-        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Z', 1))    # Assuming V = Z
-        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Z', 10))
-        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Z', 50))
+        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', -1))
+        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', -10))
+        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', -50))
+        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Y', 1))    # Assuming V = Z
+        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Y', 10))
+        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Y', 50))
 
         # Zeroing buttons
         self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))         # zero X
@@ -251,7 +251,6 @@ class MainWindowController(QMainWindow):
 
         if frame is None or getattr(frame, "size", 0) == 0:
             self.clear_image_display()
-            return
         try:
             rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
@@ -282,16 +281,18 @@ class MainWindowController(QMainWindow):
             logger.warning("Попытка управления осями без подключения к CNC")
             return
         try:
-            logger.debug("Moving %s by %s mm", axis, steps)
-            current = float(self.ui.cur_x_label.text() or "0")
-            new_pos = current + steps
-
             if axis == 'X':
-                self.driver.move_x_rel(int(steps))
-                self.ui.cur_x_label.setText(str(round(new_pos, 2)))
+                current = float(self.ui.cur_x_label.text() or "0")
+                if current + steps >= 0 and current + steps < 285:
+                    logger.debug("Moving %s by %s mm", axis, steps)
+                    self.driver.move_x_rel(int(steps))
+                    self.ui.cur_x_label.setText(str(round(current + steps, 2)))
             elif axis == 'Y':
+                current = float(self.ui.cur_y_label.text() or "0")
+                if current + steps >= 0 and current + steps < 260:
+                    logger.debug("Moving %s by %s mm", axis, steps)
                     self.driver.move_y_rel(int(steps))
-                    self.ui.cur_y_label.setText(str(round(new_pos, 2)))
+                    self.ui.cur_y_label.setText(str(round(current + steps, 2)))
             else:
                 logger.warning("Неизвестная ось: %s", axis)
         except Exception as e:
