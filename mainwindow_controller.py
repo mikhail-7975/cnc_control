@@ -5,11 +5,16 @@ import traceback
 import logging
 
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel
+from PyQt6.QtWidgets import (
+    QMainWindow, QApplication, QLabel, QListWidget,
+    QAbstractItemView, QVBoxLayout, QFileDialog
+)
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 from mainwindow_ui import Ui_MainWindow 
 from cnc_control.cnc_lib.new_machine_lib import CncMachineDriver
 from cnc_control.camera.camera_reader import ThreadSafeCameraReader
+from widgets_collection import TrackFileControlWidget
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -29,7 +34,31 @@ class MainWindowController(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
 
-        # --- Camera related ---
+        # === Replace scroll area contents with QListWidget ===
+        # For take image points
+        self.take_image_points_list = QListWidget()
+        self.take_image_points_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.ui.take_image_points_display_area.setWidget(self.take_image_points_list)
+
+        self.image_points_file_control = TrackFileControlWidget()
+        self.image_points_file_control.setMaximumSize(100, 40)
+        self.ui.verticalLayout_3.addWidget(self.image_points_file_control)
+
+        self.image_points_currnet_filename = None
+        self.image_points_file_control.new_file_tool_button.clicked.connect(self.__new_file_button_clicked)
+        self.image_points_file_control.open_file_tool_button.clicked.connect(self.__open_file_button_clicked)
+        self.image_points_file_control.save_file_tool_button.clicked.connect(self.__save_file_button_clicked)
+
+        # For component coordinates
+        self.component_coordinates_list = QListWidget()
+        self.component_coordinates_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.ui.component_coordinates_display_area.setWidget(self.component_coordinates_list)
+
+        self.component_coordinates_file_control = TrackFileControlWidget()
+        self.component_coordinates_file_control.setMaximumSize(100, 40)
+        self.ui.verticalLayout_4.addWidget(self.component_coordinates_file_control)
+
+        # Camera variables
         self.cam = None
         self.reconnect_attempts = 0
         self.timer = QTimer(self)
@@ -39,6 +68,7 @@ class MainWindowController(QMainWindow):
 
         # image_label: 
         self.image_label = QLabel(self.ui.image_displayer)
+        self.image_arch = None
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setScaledContents(False)
         self.image_label.move(0, 0)
@@ -49,6 +79,8 @@ class MainWindowController(QMainWindow):
         # CNC-related variables
         self.cnc_connected = False
         self.driver = None
+
+        self.take_image_current_filename = "keypoints/"
 
         # Connect signals
         self.setup_connections()
@@ -69,6 +101,14 @@ class MainWindowController(QMainWindow):
         self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
         self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
         self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
+        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Z', 1))    # Assuming V = Z
+        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Z', 10))
+        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Z', 50))
+
+        # Zeroing buttons
+        self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))         # zero X
+        self.ui.pushButton_2.clicked.connect(lambda: self.zero_axis('Y'))       # zero Y
+        self.ui.pushButton_3.clicked.connect(self.zero_all)                     # zero all
 
 
         # Zeroing buttons
@@ -82,6 +122,45 @@ class MainWindowController(QMainWindow):
 
         # CNC connection button
         self.ui.connect_cnc_button.clicked.connect(self.toggle_cnc_connection)
+
+        # Coordinate list management
+        self.ui.add_point_button.clicked.connect(self.add_image_point)
+        self.ui.delete_point_button.clicked.connect(self.delete_selected_image_point)
+
+        self.ui.add_button.clicked.connect(self.add_component_coordinate)
+        self.ui.delete_component_button.clicked.connect(self.delete_selected_component)
+
+    # === Coordinate list functionality ===
+
+    def add_image_point(self):
+        # For demo: add current position as point
+        x = self.ui.cur_x_label.text()
+        y = self.ui.cur_y_label.text()
+        item_text = f"({x}, {y})"
+        self.take_image_points_list.addItem(item_text)
+
+    def delete_selected_image_point(self):
+        row = self.take_image_points_list.currentRow()
+        if row >= 0:
+            self.take_image_points_list.takeItem(row)
+        else:
+            self.show_error("Нет выбранной точки для удаления.")
+
+    def add_component_coordinate(self):
+        # For demo: add current position
+        x = self.ui.cur_x_label.text()
+        y = self.ui.cur_y_label.text()
+        item_text = f"Комп: ({x}, {y})"
+        self.component_coordinates_list.addItem(item_text)
+
+    def delete_selected_component(self):
+        row = self.component_coordinates_list.currentRow()
+        if row >= 0:
+            self.component_coordinates_list.takeItem(row)
+        else:
+            self.show_error("Нет выбранной координаты компонента для удаления.")
+
+    # === Camera and CNC logic (unchanged) ===
 
     def clear_image_display(self):
         self.image_label.clear()
@@ -167,7 +246,6 @@ class MainWindowController(QMainWindow):
         if frame is None or getattr(frame, "size", 0) == 0:
             self.clear_image_display()
             return
-
         try:
             rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
@@ -299,6 +377,41 @@ class MainWindowController(QMainWindow):
         logger.error("ERROR: %s", message)
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
+
+    def __new_file_button_clicked(self):
+        filename, _ = QFileDialog.getSaveFileName(
+            parent=self,                            # Parent widget
+            caption="Select a File",                  # Dialog window title
+            directory="keypoints",                               # Default directory (empty string defaults to current working directory)
+            filter="Text (*.txt)" # File filters
+        )
+        self.take_image_current_filename = filename if filename else "noname_image_points"
+        # TODO: warning for existing file
+        self.take_image_points_list.clear()
+
+    def __open_file_button_clicked(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            parent=self,                            # Parent widget
+            caption="Select a File",                  # Dialog window title
+            directory="keypoints",                               # Default directory (empty string defaults to current working directory)
+            filter="Text (*.txt)" # File filters
+        )
+        if not filename:
+            return
+        self.take_image_current_filename = filename
+        self.take_image_points_list.clear()
+        with open(filename, 'r') as f:
+            items_from_file = f.read().splitlines()
+        self.take_image_points_list.addItems(items_from_file)
+
+        # TODO: warning for existing file
+
+
+    def __save_file_button_clicked(self):
+        points = [self.take_image_points_list.item(i).text() for i in range(self.take_image_points_list.count())]
+        with open (self.take_image_current_filename+"_.txt", 'w') as f:
+            f.write('\n'.join(points))
+
 
     def closeEvent(self, event):
         try:
