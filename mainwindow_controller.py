@@ -7,7 +7,7 @@ import logging
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog
+    QAbstractItemView, QVBoxLayout, QFileDialog, QPushButton
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
@@ -48,6 +48,11 @@ class MainWindowController(QMainWindow):
         self.image_points_file_control.new_file_tool_button.clicked.connect(self.__new_file_button_clicked)
         self.image_points_file_control.open_file_tool_button.clicked.connect(self.__open_file_button_clicked)
         self.image_points_file_control.save_file_tool_button.clicked.connect(self.__save_file_button_clicked)
+
+        self.compose_inspection_report_button = QPushButton()
+        self.compose_inspection_report_button.setFixedSize(100, 30)
+        self.compose_inspection_report_button.setText("Отчёт")
+        self.ui.verticalLayout_3.addWidget(self.compose_inspection_report_button)
 
         # For component coordinates
         self.component_coordinates_list = QListWidget()
