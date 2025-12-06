@@ -1,5 +1,7 @@
-from PyQt6.QtWidgets import QToolButton, QStyle, QMainWindow, QWidget, QHBoxLayout, QSizePolicy
+from PyQt6.QtWidgets import QToolButton, QStyle, QMainWindow, QWidget, QHBoxLayout, QSizePolicy, QGroupBox,\
+QGridLayout, QLabel, QPushButton
 from PyQt6.QtGui import QIcon
+from PyQt6 import QtCore
 
 class TrackFileControlWidget(QWidget):
     def __init__(self, *args, **kwargs):
@@ -32,6 +34,75 @@ class TrackFileControlWidget(QWidget):
         self.tool_layout.addWidget(self.open_file_tool_button)
         self.tool_layout.addWidget(self.edit_file_tool_button)
         self.setLayout(self.tool_layout)
+
+
+class JoystickGroup(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.joystic_groupbox = QGroupBox()
+        self.joystic_groupbox.setMaximumSize(QtCore.QSize(380, 320))
+        self.joystic_groupbox.setTitle("")
+        self.joystic_groupbox.setObjectName("joystic_groupbox")
+        
+        self.gridLayout_2 = QGridLayout(self.joystic_groupbox)
+        self.gridLayout_2.setObjectName("gridLayout_2")
+        
+        self._create_movement_buttons()
+        self._create_vertical_buttons()
+        self._create_zero_buttons()
+        self._create_coordinate_labels()
+
+        self.setLayout(self.gridLayout_2)
+
+    def _create_movement_buttons(self):
+        self.up50_button = self._create_button("up50_button", "50", 0, 3)
+        self.up10_button = self._create_button("up10_button", "10", 1, 3)
+        self.up_1_button = self._create_button("up_1_button", "1 ", 2, 3)
+        
+        self.left_50_button = self._create_button("left_50_button", "<-50", 3, 0)
+        self.left_10_button = self._create_button("left_10_button", "<-10", 3, 1)
+        self.left_1_button = self._create_button("left_1_button", "<-1", 3, 2)
+        
+        self.right_1_button = self._create_button("right_1_button", "1->", 3, 4)
+        self.right_10_button = self._create_button("right_10_button", "10->", 3, 5)
+        self.right_50_button = self._create_button("right_50_button", "50->", 3, 6)
+
+    def _create_vertical_buttons(self):
+        self.pushButton_4 = self._create_button("pushButton_4", "1 V", 4, 3)
+        self.pushButton_5 = self._create_button("pushButton_5", "10 V", 5, 3)
+        self.pushButton_6 = self._create_button("pushButton_6", "50 V", 6, 3)
+
+    def _create_zero_buttons(self):
+        self.pushButton = self._create_button("pushButton", "zero X", 6, 0, 60, 60)
+        self.pushButton_2 = self._create_button("pushButton_2", "zero Y", 6, 1, 60)
+        self.pushButton_3 = self._create_button("pushButton_3", "zero", 5, 0, 60)
+
+    def _create_coordinate_labels(self):
+        self.label_4 = QLabel(parent=self.joystic_groupbox)
+        self.label_4.setObjectName("label_4")
+        self.gridLayout_2.addWidget(self.label_4, 0, 5, 1, 1)
+        
+        self.label_5 = QLabel(parent=self.joystic_groupbox)
+        self.label_5.setObjectName("label_5")
+        self.gridLayout_2.addWidget(self.label_5, 1, 5, 1, 1)
+        
+        self.cur_x_label = QLabel(parent=self.joystic_groupbox)
+        self.cur_x_label.setText("")
+        self.cur_x_label.setObjectName("cur_x_label")
+        self.gridLayout_2.addWidget(self.cur_x_label, 0, 6, 1, 1)
+        
+        self.cur_y_label = QLabel(parent=self.joystic_groupbox)
+        self.cur_y_label.setText("")
+        self.cur_y_label.setObjectName("cur_y_label")
+        self.gridLayout_2.addWidget(self.cur_y_label, 1, 6, 1, 1)
+
+    def _create_button(self, name, text, row, col, max_width=40, max_height=16777215):
+        button = QPushButton(parent=self.joystic_groupbox)
+        button.setMaximumSize(QtCore.QSize(max_width, max_height))
+        button.setObjectName(name)
+        self.gridLayout_2.addWidget(button, row, col, 1, 1)
+        return button
+
 
 if __name__ == "__main__":
     import sys
