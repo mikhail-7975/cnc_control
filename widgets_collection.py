@@ -44,15 +44,15 @@ class JoystickGroup(QWidget):
         self.joystic_groupbox.setTitle("")
         self.joystic_groupbox.setObjectName("joystic_groupbox")
         
-        self.gridLayout_2 = QGridLayout(self.joystic_groupbox)
-        self.gridLayout_2.setObjectName("gridLayout_2")
+        self.joystick_buttons_layout = QGridLayout(self.joystic_groupbox)
+        self.joystick_buttons_layout.setObjectName("gridLayout_2")
         
         self._create_movement_buttons()
         self._create_vertical_buttons()
         self._create_zero_buttons()
         self._create_coordinate_labels()
 
-        self.setLayout(self.gridLayout_2)
+        self.setLayout(self.joystick_buttons_layout)
 
     def _create_movement_buttons(self):
         self.up50_button = self._create_button("up50_button", "50", 0, 3)
@@ -73,34 +73,34 @@ class JoystickGroup(QWidget):
         self.pushButton_6 = self._create_button("pushButton_6", "50 V", 6, 3)
 
     def _create_zero_buttons(self):
-        self.pushButton = self._create_button("pushButton", "zero X", 6, 0, 60, 60)
-        self.pushButton_2 = self._create_button("pushButton_2", "zero Y", 6, 1, 60)
-        self.pushButton_3 = self._create_button("pushButton_3", "zero", 5, 0, 60)
+        self.zero_x_pushButton = self._create_button("pushButton", "zero X", 6, 0, 60, 60)
+        self.zero_y_pushButton = self._create_button("pushButton_2", "zero Y", 6, 1, 60)
+        self.zero_both_pushButton = self._create_button("pushButton_3", "zero", 5, 0, 60)
 
     def _create_coordinate_labels(self):
-        self.label_4 = QLabel(parent=self.joystic_groupbox)
-        self.label_4.setObjectName("label_4")
-        self.gridLayout_2.addWidget(self.label_4, 0, 5, 1, 1)
+        self.x_value_label = QLabel(parent=self.joystic_groupbox)
+        self.x_value_label.setObjectName("label_4")
+        self.joystick_buttons_layout.addWidget(self.x_value_label, 0, 5, 1, 1)
         
-        self.label_5 = QLabel(parent=self.joystic_groupbox)
-        self.label_5.setObjectName("label_5")
-        self.gridLayout_2.addWidget(self.label_5, 1, 5, 1, 1)
+        self.y_value_label = QLabel(parent=self.joystic_groupbox)
+        self.y_value_label.setObjectName("label_5")
+        self.joystick_buttons_layout.addWidget(self.y_value_label, 1, 5, 1, 1)
         
-        self.cur_x_label = QLabel(parent=self.joystic_groupbox)
-        self.cur_x_label.setText("")
-        self.cur_x_label.setObjectName("cur_x_label")
-        self.gridLayout_2.addWidget(self.cur_x_label, 0, 6, 1, 1)
+        self.current_x_value_number_label = QLabel(parent=self.joystic_groupbox)
+        self.current_x_value_number_label.setText("")
+        self.current_x_value_number_label.setObjectName("cur_x_label")
+        self.joystick_buttons_layout.addWidget(self.current_x_value_number_label, 0, 6, 1, 1)
         
-        self.cur_y_label = QLabel(parent=self.joystic_groupbox)
-        self.cur_y_label.setText("")
-        self.cur_y_label.setObjectName("cur_y_label")
-        self.gridLayout_2.addWidget(self.cur_y_label, 1, 6, 1, 1)
+        self.current_y_value_number_label = QLabel(parent=self.joystic_groupbox)
+        self.current_y_value_number_label.setText("")
+        self.current_y_value_number_label.setObjectName("cur_y_label")
+        self.joystick_buttons_layout.addWidget(self.current_y_value_number_label, 1, 6, 1, 1)
 
     def _create_button(self, name, text, row, col, max_width=40, max_height=16777215):
         button = QPushButton(parent=self.joystic_groupbox)
         button.setMaximumSize(QtCore.QSize(max_width, max_height))
         button.setObjectName(name)
-        self.gridLayout_2.addWidget(button, row, col, 1, 1)
+        self.joystick_buttons_layout.addWidget(button, row, col, 1, 1)
         return button
 
 
