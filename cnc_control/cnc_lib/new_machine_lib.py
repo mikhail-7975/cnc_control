@@ -71,19 +71,19 @@ class CncMachineDriver:
         self._log_response("Units = mm, Absolute mode")
 
     # --- Основные команды движения ---
-    def move_x(self, x_mm, speed=1000):
+    def move_x(self, x_mm, speed=7000):
         self._check_limits(x_mm, axis='X')
         command = f"G1 X{x_mm} F{speed}"
         self._execute_move(command)
         self.X = x_mm
 
-    def move_y(self, y_mm, speed=1000):
+    def move_y(self, y_mm, speed=7000):
         self._check_limits(y_mm, axis='Y')
         command = f"G1 Y{y_mm} F{speed}"
         self._execute_move(command)
         self.Y = y_mm
 
-    def move_xy(self, x_mm, y_mm, speed=1000):
+    def move_xy(self, x_mm, y_mm, speed=7000):
         self._check_limits(x_mm, axis='X')
         self._check_limits(y_mm, axis='Y')
         command = f"G1 X{x_mm} Y{y_mm} F{speed}"
@@ -91,7 +91,7 @@ class CncMachineDriver:
         self.X, self.Y = x_mm, y_mm
 
     # --- Относительное перемещение ---
-    def move_x_rel(self, dx_mm, speed=1000):
+    def move_x_rel(self, dx_mm, speed=7000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 X{dx_mm} F{speed}"
@@ -99,7 +99,7 @@ class CncMachineDriver:
         self.X += dx_mm
         self._send_gcode("G90")
 
-    def move_y_rel(self, dy_mm, speed=1000):
+    def move_y_rel(self, dy_mm, speed=7000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 Y{dy_mm} F{speed}"
@@ -107,7 +107,7 @@ class CncMachineDriver:
         self.Y += dy_mm
         self._send_gcode("G90")
 
-    def move_xy_rel(self, dx_mm, dy_mm, speed=1000):
+    def move_xy_rel(self, dx_mm, dy_mm, speed=7000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 X{dx_mm} Y{dy_mm} F{speed}"

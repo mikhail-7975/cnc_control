@@ -97,7 +97,7 @@ class ThreadSafeCameraReader:
                     f"calibration resolution {self.undistorter.resolution}"
                 )
 
-        self._latest_raw_frame = None
+        self._latest_raw_frame = np.zeros((6000, 8000, 3), dtype= "uint8")
         self._frame_lock = threading.Lock()
         self._running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -106,14 +106,14 @@ class ThreadSafeCameraReader:
     def _capture_loop(self):
         """Capture raw frames in background."""
         while self._running:
-            ret, frame = self.cap.read()
+            with self._frame_lock:
+                ret = self.cap.read(self._latest_raw_frame)
             if not ret:
                 print("⚠️ Failed to read frame. Stopping capture.")
                 time.sleep(0.05)
                 continue
-            with self._frame_lock:
-                # Store RAW frame only
-                self._latest_raw_frame = frame.copy()
+            
+
 
             time.sleep(0.001)  # optional: reduce CPU
 
@@ -124,20 +124,20 @@ class ThreadSafeCameraReader:
         Returns:
             np.ndarray or None: Undistorted (or raw) image, or None if not ready.
         """
-        with self._frame_lock:
-            if self._latest_raw_frame is None:
-                return None
-            frame = self._latest_raw_frame.copy()
+        # with self._frame_lock:
+        #     if self._latest_raw_frame is None:
+        #         return None
+        #     frame = self._latest_raw_frame.copy()
 
-        # Apply undistortion OUTSIDE the lock (to avoid holding lock during processing)
-        if self.undistorter is not None:
-            try:
-                frame = self.undistorter.undistort(frame)
-            except Exception as e:
-                print(f"❌ Undistortion failed in get_image(): {e}")
-                # Optionally return raw frame or None — here we return raw
-                # (you can change behavior as needed)
-        return frame
+        # # Apply undistortion OUTSIDE the lock (to avoid holding lock during processing)
+        # if self.undistorter is not None:
+        #     try:
+        #         frame = self.undistorter.undistort(frame)
+        #     except Exception as e:
+        #         print(f"❌ Undistortion failed in get_image(): {e}")
+        #         # Optionally return raw frame or None — here we return raw
+        #         # (you can change behavior as needed)
+        return self._latest_raw_frame
 
     def stop(self):
         """Stop background thread and release camera."""

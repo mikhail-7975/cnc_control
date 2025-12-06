@@ -7,7 +7,7 @@ import logging
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog
+    QAbstractItemView, QVBoxLayout, QFileDialog, QPushButton
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindowController(QMainWindow):
-    CAMERA_TIMER_INTERVAL_MS = 200
+    CAMERA_TIMER_INTERVAL_MS = 33
     CAMERA_RECONNECT_ATTEMPTS = 5
     CNC_BAUD_RATE = 115200
     CNC_TIMEOUT = 2
@@ -48,6 +48,12 @@ class MainWindowController(QMainWindow):
         self.image_points_file_control.new_file_tool_button.clicked.connect(self.__new_file_button_clicked)
         self.image_points_file_control.open_file_tool_button.clicked.connect(self.__open_file_button_clicked)
         self.image_points_file_control.save_file_tool_button.clicked.connect(self.__save_file_button_clicked)
+
+        self.compose_inspection_report_button = QPushButton()
+        self.compose_inspection_report_button.setFixedSize(100, 30)
+        self.compose_inspection_report_button.setText("Отчёт")
+        self.compose_inspection_report_button.clicked.connect(self.__compose_report_from_file)
+        self.ui.verticalLayout_3.addWidget(self.compose_inspection_report_button)
 
         # For component coordinates
         self.component_coordinates_list = QListWidget()
@@ -98,12 +104,12 @@ class MainWindowController(QMainWindow):
         self.ui.right_50_button.clicked.connect(lambda: self.move_axis('X', 50))
 
         # Joystick buttons (Y-axis)
-        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
-        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
-        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
-        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Z', 1))    # Assuming V = Z
-        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Z', 10))
-        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Z', 50))
+        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', -1))
+        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', -10))
+        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', -50))
+        self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Y', 1))    # Assuming V = Z
+        self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Y', 10))
+        self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Y', 50))
 
         # Zeroing buttons
         self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))         # zero X
@@ -245,7 +251,6 @@ class MainWindowController(QMainWindow):
 
         if frame is None or getattr(frame, "size", 0) == 0:
             self.clear_image_display()
-            return
         try:
             rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
@@ -276,16 +281,18 @@ class MainWindowController(QMainWindow):
             logger.warning("Попытка управления осями без подключения к CNC")
             return
         try:
-            logger.debug("Moving %s by %s mm", axis, steps)
-            current = float(self.ui.cur_x_label.text() or "0")
-            new_pos = current + steps
-
             if axis == 'X':
-                self.driver.move_x_rel(int(steps))
-                self.ui.cur_x_label.setText(str(round(new_pos, 2)))
+                current = float(self.ui.cur_x_label.text() or "0")
+                if current + steps >= 0 and current + steps < 285:
+                    logger.debug("Moving %s by %s mm", axis, steps)
+                    self.driver.move_x_rel(int(steps))
+                    self.ui.cur_x_label.setText(str(round(current + steps, 2)))
             elif axis == 'Y':
+                current = float(self.ui.cur_y_label.text() or "0")
+                if current + steps >= 0 and current + steps < 260:
+                    logger.debug("Moving %s by %s mm", axis, steps)
                     self.driver.move_y_rel(int(steps))
-                    self.ui.cur_y_label.setText(str(round(new_pos, 2)))
+                    self.ui.cur_y_label.setText(str(round(current + steps, 2)))
             else:
                 logger.warning("Неизвестная ось: %s", axis)
         except Exception as e:
@@ -411,6 +418,25 @@ class MainWindowController(QMainWindow):
         points = [self.take_image_points_list.item(i).text() for i in range(self.take_image_points_list.count())]
         with open (self.take_image_current_filename+"_.txt", 'w') as f:
             f.write('\n'.join(points))
+
+    def __compose_report_from_file(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            parent=self,                            # Parent widget
+            caption="Select a report File",                  # Dialog window title
+            directory="inspection_reports",                               # Default directory (empty string defaults to current working directory)
+            filter="All (*.*)" # File filters
+        )
+        if not filename:
+            return
+        print(filename)
+        inspection_map = self.__draw_inspection_map_by_report(filepath=filename)
+        self.__save_inspection_map(inspection_map)
+        
+    def __draw_inspection_map_by_report(self, filepath: str):
+        ...
+
+    def __save_inspection_map(self, img):
+        ...
 
 
     def closeEvent(self, event):
