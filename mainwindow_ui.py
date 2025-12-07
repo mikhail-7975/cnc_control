@@ -7,7 +7,7 @@
 
 
 from PyQt6 import QtCore, QtGui, QtWidgets
-from widgets_collection import JoystickGroup
+from widgets_collection import JoystickGroup, InspectionGroup
 
 
 class Ui_MainWindow(object):
@@ -49,7 +49,9 @@ class Ui_MainWindow(object):
 
         self.working_process_type_tabs_widget = QtWidgets.QTabWidget()
         self.joystick_control_widget = JoystickGroup()
+        self.inspection_control_widget = InspectionGroup()
         self.working_process_type_tabs_widget.addTab(self.joystick_control_widget, "Выбор ключевых точек")
+        self.working_process_type_tabs_widget.addTab(self.inspection_control_widget, "Инспекция")
         self.gridLayout.addWidget(self.working_process_type_tabs_widget, 0, 1, 1, 1)
 
         self.cnc_settings_groupbox = QtWidgets.QGroupBox(parent=self.centralwidget)
