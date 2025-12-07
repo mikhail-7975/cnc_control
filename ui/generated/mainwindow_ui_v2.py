@@ -1,4 +1,4 @@
-# Form implementation generated from reading ui file 'cnc_control.ui'
+# Form implementation generated from reading ui file 'ui/cnc_control.ui'
 #
 # Created by: PyQt6 UI code generator 6.10.0
 #
@@ -310,7 +310,7 @@ class Ui_MainWindow(object):
         MainWindow.setCentralWidget(self.centralwidget)
 
         self.retranslateUi(MainWindow)
-        self.tabWidget.setCurrentIndex(2)
+        self.tabWidget.setCurrentIndex(0)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
 
     def retranslateUi(self, MainWindow):
@@ -365,13 +365,3 @@ class Ui_MainWindow(object):
         self.delete_deffect_button.setText(_translate("MainWindow", "удалить "))
         self.next_component_image_button.setText(_translate("MainWindow", ">"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.inspect_tab), _translate("MainWindow", "Инспекция"))
-
-
-if __name__ == "__main__":
-    import sys
-    app = QtWidgets.QApplication(sys.argv)
-    MainWindow = QtWidgets.QMainWindow()
-    ui = Ui_MainWindow()
-    ui.setupUi(MainWindow)
-    MainWindow.show()
-    sys.exit(app.exec())

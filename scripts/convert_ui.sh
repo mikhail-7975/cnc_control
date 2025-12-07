@@ -12,7 +12,7 @@ set -e  # Остановка при ошибке
 
 # Получаем директорию скрипта (корень репозитория)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+# cd "$SCRIPT_DIR"
 
 # Проверка наличия pyuic6
 if ! command -v pyuic6 &> /dev/null; then
@@ -21,6 +21,7 @@ if ! command -v pyuic6 &> /dev/null; then
     exit 1
 fi
 
+echo "$(pwd)"
 # Пути к файлам
 UI_FILE="ui/cnc_control.ui"
 OUTPUT_FILE="ui/generated/mainwindow_ui_v2.py"
