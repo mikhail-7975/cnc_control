@@ -62,6 +62,17 @@ class MainWindowControllerV2(QMainWindow):
         self.cnc_connected = False
         self.driver = None
 
+        # Etalon images variables
+        self.etalon_images = []  # Список загруженных эталонных изображений (numpy arrays)
+        self.current_etalon_index = -1  # Индекс текущего изображения (-1 если нет изображений)
+        
+        # Etalon image display label
+        self.etalon_image_label = QLabel(self.ui.display_etalon_image_widget)
+        self.etalon_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.etalon_image_label.setScaledContents(False)
+        self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        self.clear_etalon_display()
+
         # Connect signals
         self.setup_connections()
 
@@ -103,6 +114,10 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.add_point_button.clicked.connect(self.add_image_point)
         self.ui.delete_point_button.clicked.connect(self.delete_selected_image_point)
         
+        # Etalon images management
+        self.ui.load_etalon_images_button.clicked.connect(self.load_etalon_images)
+        self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
+        self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
 
     # === Coordinate list functionality ===
 
@@ -309,6 +324,107 @@ class MainWindowControllerV2(QMainWindow):
         # TODO: Реализовать логику остановки
         self.show_error("Функция остановки последовательности ещё не реализована")
 
+    # === Etalon images functionality ===
+
+    def load_etalon_images(self):
+        """Загрузить эталонные изображения из файлов."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Выберите эталонные изображения",
+            "",
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.tiff *.tif);;All Files (*)"
+        )
+        
+        if not file_paths:
+            return
+        
+        try:
+            loaded_images = []
+            for file_path in file_paths:
+                # Загружаем изображение с помощью OpenCV
+                image = cv2.imread(file_path)
+                if image is None:
+                    print(f"Предупреждение: не удалось загрузить изображение {file_path}")
+                    continue
+                loaded_images.append(image)
+            
+            if loaded_images:
+                self.etalon_images = loaded_images
+                self.current_etalon_index = 0
+                self.display_current_etalon_image()
+                print(f"Загружено {len(self.etalon_images)} эталонных изображений")
+            else:
+                self.show_error("Не удалось загрузить ни одного изображения")
+        except Exception as e:
+            self.show_error(f"Ошибка при загрузке изображений: {str(e)}")
+
+    def display_current_etalon_image(self):
+        """Отобразить текущее эталонное изображение."""
+        if not self.etalon_images or self.current_etalon_index < 0:
+            self.clear_etalon_display()
+            self.update_etalon_image_label()
+            return
+        
+        if self.current_etalon_index >= len(self.etalon_images):
+            self.current_etalon_index = len(self.etalon_images) - 1
+        
+        try:
+            image = self.etalon_images[self.current_etalon_index]
+            # Конвертируем BGR в RGB для Qt
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            
+            # Масштабируем изображение под размер виджета
+            scaled_pixmap = pixmap.scaled(
+                self.ui.display_etalon_image_widget.width(),
+                self.ui.display_etalon_image_widget.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            self.etalon_image_label.setPixmap(scaled_pixmap)
+            self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+            self.ui.display_etalon_image_widget.setStyleSheet("")
+            
+            self.update_etalon_image_label()
+        except Exception as e:
+            self.show_error(f"Ошибка при отображении изображения: {str(e)}")
+
+    def update_etalon_image_label(self):
+        """Обновить метку с номером текущего изображения."""
+        if not self.etalon_images or self.current_etalon_index < 0:
+            self.ui.etalon_image_number_label.setText("Нет изображений")
+        else:
+            current_num = self.current_etalon_index + 1
+            total = len(self.etalon_images)
+            self.ui.etalon_image_number_label.setText(f"{current_num} / {total}")
+
+    def next_etalon_image(self):
+        """Перейти к следующему эталонному изображению."""
+        if not self.etalon_images:
+            return
+        
+        self.current_etalon_index = (self.current_etalon_index + 1) % len(self.etalon_images)
+        self.display_current_etalon_image()
+
+    def prev_etalon_image(self):
+        """Перейти к предыдущему эталонному изображению."""
+        if not self.etalon_images:
+            return
+        
+        self.current_etalon_index = (self.current_etalon_index - 1) % len(self.etalon_images)
+        self.display_current_etalon_image()
+
+    def clear_etalon_display(self):
+        """Очистить отображение эталонного изображения."""
+        self.etalon_image_label.clear()
+        self.ui.display_etalon_image_widget.setStyleSheet("background-color: black;")
+        self.etalon_image_label.move(0, 0)
+        self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+
     # === Camera and CNC logic (unchanged) ===
 
     def clear_image_display(self):
@@ -375,6 +491,11 @@ class MainWindowControllerV2(QMainWindow):
     def resizeEvent(self, event):
         if self.image_label is not None:
             self.image_label.resize(self.ui.image_displayer.size())
+        if self.etalon_image_label is not None:
+            self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+            # Перерисовываем изображение при изменении размера
+            if self.etalon_images and self.current_etalon_index >= 0:
+                self.display_current_etalon_image()
         super().resizeEvent(event)
 
     def move_axis(self, axis, steps):
