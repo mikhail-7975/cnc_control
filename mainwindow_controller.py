@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 from mainwindow_ui import Ui_MainWindow 
+# from mainwindow_ui_v2 import Ui_MainWindow 
 from cnc_control.cnc_lib.new_machine_lib import CncMachineDriver
 from cnc_control.camera.camera_reader import ThreadSafeCameraReader
 from widgets_collection import TrackFileControlWidget
