@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1298</width>
-    <height>592</height>
+    <width>1237</width>
+    <height>621</height>
    </rect>
   </property>
   <property name="maximumSize">
@@ -31,14 +31,56 @@
         <string>Настройка перемещений</string>
        </attribute>
        <layout class="QGridLayout" name="gridLayout_3">
-        <item row="0" column="0">
-         <widget class="QWidget" name="image_displayer" native="true">
+        <item row="0" column="2" rowspan="2">
+         <widget class="QGroupBox" name="take_image_points_groupbox">
           <property name="minimumSize">
            <size>
-            <width>480</width>
+            <width>190</width>
             <height>320</height>
            </size>
           </property>
+          <property name="maximumSize">
+           <size>
+            <width>190</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="title">
+           <string>Точки съёмки</string>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_3">
+           <item>
+            <widget class="QScrollArea" name="take_image_points_display_area">
+             <property name="widgetResizable">
+              <bool>true</bool>
+             </property>
+             <widget class="QWidget" name="scrollAreaWidgetContents">
+              <property name="geometry">
+               <rect>
+                <x>0</x>
+                <y>0</y>
+                <width>164</width>
+                <height>438</height>
+               </rect>
+              </property>
+             </widget>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="add_point_button">
+             <property name="text">
+              <string>добавить</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="delete_point_button">
+             <property name="text">
+              <string>удалить</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
          </widget>
         </item>
         <item row="0" column="1">
@@ -279,158 +321,6 @@
           </layout>
          </widget>
         </item>
-        <item row="0" column="2" rowspan="2">
-         <widget class="QGroupBox" name="take_image_points_groupbox">
-          <property name="minimumSize">
-           <size>
-            <width>190</width>
-            <height>320</height>
-           </size>
-          </property>
-          <property name="title">
-           <string>Точки съёмки</string>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout_3">
-           <item>
-            <widget class="QScrollArea" name="take_image_points_display_area">
-             <property name="widgetResizable">
-              <bool>true</bool>
-             </property>
-             <widget class="QWidget" name="scrollAreaWidgetContents">
-              <property name="geometry">
-               <rect>
-                <x>0</x>
-                <y>0</y>
-                <width>164</width>
-                <height>409</height>
-               </rect>
-              </property>
-             </widget>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="add_point_button">
-             <property name="text">
-              <string>добавить</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="delete_point_button">
-             <property name="text">
-              <string>удалить</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item row="0" column="3" rowspan="2">
-         <widget class="QGroupBox" name="componet_coordinates_groupbox">
-          <property name="minimumSize">
-           <size>
-            <width>190</width>
-            <height>0</height>
-           </size>
-          </property>
-          <property name="title">
-           <string>Координаты компонентов</string>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout_4">
-           <item>
-            <widget class="QScrollArea" name="component_coordinates_display_area">
-             <property name="widgetResizable">
-              <bool>true</bool>
-             </property>
-             <widget class="QWidget" name="scrollAreaWidgetContents_2">
-              <property name="geometry">
-               <rect>
-                <x>0</x>
-                <y>0</y>
-                <width>164</width>
-                <height>376</height>
-               </rect>
-              </property>
-             </widget>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="add_button">
-             <property name="text">
-              <string>Добавить</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="delete_component_button">
-             <property name="text">
-              <string>Удалить</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="load_from_file_button">
-             <property name="text">
-              <string>Загрузить файл</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item row="1" column="0">
-         <widget class="QGroupBox" name="camera_settings_groupbox">
-          <property name="title">
-           <string>Настройки камеры</string>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout">
-           <item>
-            <widget class="QLabel" name="port_label_2">
-             <property name="text">
-              <string>Порт</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLineEdit" name="camera_port_lineEdit">
-             <property name="text">
-              <string>/dev/video4</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="mode_label_2">
-             <property name="text">
-              <string>Режим работы</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QFontComboBox" name="camera_mode_groupbox"/>
-           </item>
-           <item>
-            <spacer name="verticalSpacer">
-             <property name="orientation">
-              <enum>Qt::Vertical</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>20</width>
-               <height>40</height>
-              </size>
-             </property>
-            </spacer>
-           </item>
-           <item>
-            <widget class="QPushButton" name="connect_camera_button">
-             <property name="text">
-              <string>подключить</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
         <item row="1" column="1">
          <widget class="QGroupBox" name="cnc_settings_groupbox">
           <property name="maximumSize">
@@ -444,7 +334,7 @@
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_2">
            <item>
-            <widget class="QLabel" name="port_label">
+            <widget class="QLabel" name="cnc_port_label">
              <property name="text">
               <string>Порт</string>
              </property>
@@ -475,6 +365,99 @@
              <property name="text">
               <string>подключить</string>
              </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item row="0" column="0" rowspan="2">
+         <widget class="QWidget" name="camera_widget" native="true">
+          <property name="minimumSize">
+           <size>
+            <width>480</width>
+            <height>320</height>
+           </size>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_4">
+           <item>
+            <widget class="QWidget" name="image_displayer" native="true"/>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="camera_settings_groupbox">
+             <property name="maximumSize">
+              <size>
+               <width>16777215</width>
+               <height>228</height>
+              </size>
+             </property>
+             <property name="title">
+              <string>Настройки камеры</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout">
+              <item>
+               <widget class="QWidget" name="port_widget" native="true">
+                <layout class="QHBoxLayout" name="horizontalLayout_7">
+                 <item>
+                  <widget class="QLabel" name="camera_port_label">
+                   <property name="text">
+                    <string>Порт</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="camera_port_lineEdit">
+                   <property name="text">
+                    <string>/dev/video4</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QWidget" name="resolution_fps_widget" native="true">
+                <layout class="QHBoxLayout" name="horizontalLayout_8">
+                 <item>
+                  <widget class="QLabel" name="mode_label">
+                   <property name="text">
+                    <string>Разрешение / FPS</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QFontComboBox" name="camera_mode_combobox"/>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QWidget" name="exposure_widget" native="true">
+                <layout class="QHBoxLayout" name="horizontalLayout_9">
+                 <item>
+                  <widget class="QLabel" name="exposure_label">
+                   <property name="text">
+                    <string>Время экспозиции</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="exposure_lineEdit">
+                   <property name="text">
+                    <string>500</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="connect_camera_button">
+                <property name="text">
+                 <string>подключить</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </widget>
            </item>
           </layout>
@@ -562,8 +545,8 @@
                <rect>
                 <x>0</x>
                 <y>0</y>
-                <width>600</width>
-                <height>475</height>
+                <width>539</width>
+                <height>504</height>
                </rect>
               </property>
               <layout class="QVBoxLayout" name="verticalLayout_8">

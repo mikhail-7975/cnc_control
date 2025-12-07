@@ -43,7 +43,7 @@ class MainWindowControllerV2(QMainWindow):
         # For component coordinates
         self.component_coordinates_list = QListWidget()
         self.component_coordinates_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.ui.component_coordinates_display_area.setWidget(self.component_coordinates_list)
+        # self.ui.component_coordinates_display_area.setWidget(self.component_coordinates_list)
 
         # Camera variables
         self.cam = None
@@ -102,13 +102,7 @@ class MainWindowControllerV2(QMainWindow):
         # Coordinate list management
         self.ui.add_point_button.clicked.connect(self.add_image_point)
         self.ui.delete_point_button.clicked.connect(self.delete_selected_image_point)
-
-        self.ui.add_button.clicked.connect(self.add_component_coordinate)
-        self.ui.delete_component_button.clicked.connect(self.delete_selected_component)
         
-        # New button handlers (заготовки для новых кнопок)
-        # Загрузка координат компонентов из файла
-        self.ui.load_from_file_button.clicked.connect(self.load_component_coordinates_from_file)
 
     # === Coordinate list functionality ===
 
