@@ -16,15 +16,22 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 # Try to import UI v2 - adjust class name if needed
+import sys
+from pathlib import Path
+# Add project root to path for UI imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 try:
-    from mainwindow_ui_v2 import Ui_MainWindowV2 as Ui_MainWindowV2
+    from ui.generated.mainwindow_ui_v2 import Ui_MainWindowV2 as Ui_MainWindowV2
 except ImportError:
     try:
-        from mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
+        from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
     except ImportError:
         raise ImportError("Не удалось импортировать UI класс из mainwindow_ui_v2. Проверьте имя класса в файле.")
-from cnc_control.cnc_lib.new_machine_lib import CncMachineDriver
-from cnc_control.camera.camera_reader import ThreadSafeCameraReader
+from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
+from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
 
 
 class MainWindowControllerV2(QMainWindow):
