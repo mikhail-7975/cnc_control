@@ -19,17 +19,11 @@ from PyQt6.QtGui import QImage, QPixmap
 import sys
 from pathlib import Path
 # Add project root to path for UI imports
-project_root = Path(__file__).parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
+# project_root = Path(__file__).parent.parent.parent
+# if str(project_root) not in sys.path:
+#     sys.path.insert(0, str(project_root))
 
-try:
-    from ui.generated.mainwindow_ui_v2 import Ui_MainWindowV2 as Ui_MainWindowV2
-except ImportError:
-    try:
-        from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
-    except ImportError:
-        raise ImportError("Не удалось импортировать UI класс из mainwindow_ui_v2. Проверьте имя класса в файле.")
+from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
 
@@ -44,14 +38,12 @@ class MainWindowControllerV2(QMainWindow):
         # For take image points
         self.take_image_points_list = QListWidget()
         self.take_image_points_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        if hasattr(self.ui, 'take_image_points_display_area'):
-            self.ui.take_image_points_display_area.setWidget(self.take_image_points_list)
+        self.ui.take_image_points_display_area.setWidget(self.take_image_points_list)
 
         # For component coordinates
         self.component_coordinates_list = QListWidget()
         self.component_coordinates_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        if hasattr(self.ui, 'component_coordinates_display_area'):
-            self.ui.component_coordinates_display_area.setWidget(self.component_coordinates_list)
+        self.ui.component_coordinates_display_area.setWidget(self.component_coordinates_list)
 
         # Camera variables
         self.cam = None
@@ -59,15 +51,12 @@ class MainWindowControllerV2(QMainWindow):
         self.timer.timeout.connect(self.update_frame)
 
         # image_label
-        if hasattr(self.ui, 'image_displayer'):
-            self.image_label = QLabel(self.ui.image_displayer)
-            self.image_arch = None
-            self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.image_label.setScaledContents(False)
-            self.image_label.resize(self.ui.image_displayer.size())
-            self.clear_image_display()
-        else:
-            self.image_label = None
+        self.image_label = QLabel(self.ui.image_displayer)
+        self.image_arch = None
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setScaledContents(False)
+        self.image_label.resize(self.ui.image_displayer.size())
+        self.clear_image_display()
 
         # CNC-related variables
         self.cnc_connected = False
@@ -78,135 +67,55 @@ class MainWindowControllerV2(QMainWindow):
 
     def setup_connections(self):
         # Camera
-        if hasattr(self.ui, 'connect_camera_button'):
-            self.ui.connect_camera_button.clicked.connect(self.toggle_camera)
+        self.ui.connect_camera_button.clicked.connect(self.toggle_camera)
 
         # Joystick buttons (X-axis)
-        if hasattr(self.ui, 'left_1_button'):
-            self.ui.left_1_button.clicked.connect(lambda: self.move_axis('X', -1))
-        if hasattr(self.ui, 'left_10_button'):
-            self.ui.left_10_button.clicked.connect(lambda: self.move_axis('X', -10))
-        if hasattr(self.ui, 'left_50_button'):
-            self.ui.left_50_button.clicked.connect(lambda: self.move_axis('X', -50))
-        if hasattr(self.ui, 'right_1_button'):
-            self.ui.right_1_button.clicked.connect(lambda: self.move_axis('X', 1))
-        if hasattr(self.ui, 'right_10_button'):
-            self.ui.right_10_button.clicked.connect(lambda: self.move_axis('X', 10))
-        if hasattr(self.ui, 'right_50_button'):
-            self.ui.right_50_button.clicked.connect(lambda: self.move_axis('X', 50))
+        self.ui.left_1_button.clicked.connect(lambda: self.move_axis('X', -1))
+        self.ui.left_10_button.clicked.connect(lambda: self.move_axis('X', -10))
+        self.ui.left_50_button.clicked.connect(lambda: self.move_axis('X', -50))
+        self.ui.right_1_button.clicked.connect(lambda: self.move_axis('X', 1))
+        self.ui.right_10_button.clicked.connect(lambda: self.move_axis('X', 10))
+        self.ui.right_50_button.clicked.connect(lambda: self.move_axis('X', 50))
 
         # Joystick buttons (Y-axis)
-        if hasattr(self.ui, 'up_1_button'):
-            self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
-        if hasattr(self.ui, 'up10_button'):
-            self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
-        if hasattr(self.ui, 'up50_button'):
-            self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
+        self.ui.up_1_button.clicked.connect(lambda: self.move_axis('Y', 1))
+        self.ui.up10_button.clicked.connect(lambda: self.move_axis('Y', 10))
+        self.ui.up50_button.clicked.connect(lambda: self.move_axis('Y', 50))
         
-        # Z-axis buttons (may have different names in v2)
-        if hasattr(self.ui, 'pushButton_4'):
-            self.ui.pushButton_4.clicked.connect(lambda: self.move_axis('Z', 1))
-        if hasattr(self.ui, 'pushButton_5'):
-            self.ui.pushButton_5.clicked.connect(lambda: self.move_axis('Z', 10))
-        if hasattr(self.ui, 'pushButton_6'):
-            self.ui.pushButton_6.clicked.connect(lambda: self.move_axis('Z', 50))
+        # Y-axis buttons (down movement)
+        self.ui.down_1_button.clicked.connect(lambda: self.move_axis('Y', -1))
+        self.ui.down_10_button.clicked.connect(lambda: self.move_axis('Y', -10))
+        self.ui.down_50_button.clicked.connect(lambda: self.move_axis('Y', -50))
 
         # Zeroing buttons
-        if hasattr(self.ui, 'pushButton'):
-            self.ui.pushButton.clicked.connect(lambda: self.zero_axis('X'))         # zero X
-        if hasattr(self.ui, 'pushButton_2'):
-            self.ui.pushButton_2.clicked.connect(lambda: self.zero_axis('Y'))       # zero Y
-        if hasattr(self.ui, 'pushButton_3'):
-            self.ui.pushButton_3.clicked.connect(self.zero_all)                     # zero all
+        self.ui.zero_x_button.clicked.connect(lambda: self.zero_axis('X'))
+        self.ui.zero_y_button.clicked.connect(lambda: self.zero_axis('Y'))
+        self.ui.zero_all_button.clicked.connect(self.zero_all)
 
         # Initialize coordinate labels
-        if hasattr(self.ui, 'cur_x_label'):
-            self.ui.cur_x_label.setText("0.0")
-        if hasattr(self.ui, 'cur_y_label'):
-            self.ui.cur_y_label.setText("0.0")
+        self.ui.cur_x_label.setText("0.0")
+        self.ui.cur_y_label.setText("0.0")
 
         # CNC connection
-        if hasattr(self.ui, 'connect_cnc_button'):
-            self.ui.connect_cnc_button.clicked.connect(self.toggle_cnc_connection)
+        self.ui.connect_cnc_button.clicked.connect(self.toggle_cnc_connection)
 
         # Coordinate list management
-        if hasattr(self.ui, 'add_point_button'):
-            self.ui.add_point_button.clicked.connect(self.add_image_point)
-        if hasattr(self.ui, 'delete_point_button'):
-            self.ui.delete_point_button.clicked.connect(self.delete_selected_image_point)
+        self.ui.add_point_button.clicked.connect(self.add_image_point)
+        self.ui.delete_point_button.clicked.connect(self.delete_selected_image_point)
 
-        if hasattr(self.ui, 'add_button'):
-            self.ui.add_button.clicked.connect(self.add_component_coordinate)
-        if hasattr(self.ui, 'delete_component_button'):
-            self.ui.delete_component_button.clicked.connect(self.delete_selected_component)
+        self.ui.add_button.clicked.connect(self.add_component_coordinate)
+        self.ui.delete_component_button.clicked.connect(self.delete_selected_component)
         
         # New button handlers (заготовки для новых кнопок)
         # Загрузка координат компонентов из файла
-        if hasattr(self.ui, 'load_from_file_button'):
-            self.ui.load_from_file_button.clicked.connect(self.load_component_coordinates_from_file)
-        
-        # Сохранение координат компонентов в файл
-        if hasattr(self.ui, 'save_to_file_button'):
-            self.ui.save_to_file_button.clicked.connect(self.save_component_coordinates_to_file)
-        
-        # Сохранение точек съёмки в файл
-        if hasattr(self.ui, 'save_points_button'):
-            self.ui.save_points_button.clicked.connect(self.save_image_points_to_file)
-        
-        # Загрузка точек съёмки из файла
-        if hasattr(self.ui, 'load_points_button'):
-            self.ui.load_points_button.clicked.connect(self.load_image_points_from_file)
-        
-        # Редактирование координат компонентов
-        if hasattr(self.ui, 'edit_component_button'):
-            self.ui.edit_component_button.clicked.connect(self.edit_selected_component)
-        
-        # Редактирование точки съёмки
-        if hasattr(self.ui, 'edit_point_button'):
-            self.ui.edit_point_button.clicked.connect(self.edit_selected_image_point)
-        
-        # Очистка всех координат компонентов
-        if hasattr(self.ui, 'clear_components_button'):
-            self.ui.clear_components_button.clicked.connect(self.clear_all_components)
-        
-        # Очистка всех точек съёмки
-        if hasattr(self.ui, 'clear_points_button'):
-            self.ui.clear_points_button.clicked.connect(self.clear_all_image_points)
-        
-        # Настройки камеры
-        if hasattr(self.ui, 'camera_settings_button'):
-            self.ui.camera_settings_button.clicked.connect(self.open_camera_settings)
-        
-        # Настройки CNC
-        if hasattr(self.ui, 'cnc_settings_button'):
-            self.ui.cnc_settings_button.clicked.connect(self.open_cnc_settings)
-        
-        # Автоматическое перемещение к точке
-        if hasattr(self.ui, 'go_to_point_button'):
-            self.ui.go_to_point_button.clicked.connect(self.go_to_selected_point)
-        
-        # Автоматическое перемещение к компоненту
-        if hasattr(self.ui, 'go_to_component_button'):
-            self.ui.go_to_component_button.clicked.connect(self.go_to_selected_component)
-        
-        # Съёмка изображения в текущей точке
-        if hasattr(self.ui, 'capture_image_button'):
-            self.ui.capture_image_button.clicked.connect(self.capture_image_at_current_position)
-        
-        # Запуск автоматической последовательности
-        if hasattr(self.ui, 'start_sequence_button'):
-            self.ui.start_sequence_button.clicked.connect(self.start_automation_sequence)
-        
-        # Остановка автоматической последовательности
-        if hasattr(self.ui, 'stop_sequence_button'):
-            self.ui.stop_sequence_button.clicked.connect(self.stop_automation_sequence)
+        self.ui.load_from_file_button.clicked.connect(self.load_component_coordinates_from_file)
 
     # === Coordinate list functionality ===
 
     def add_image_point(self):
         """Добавить текущую позицию как точку съёмки."""
-        x = self.ui.cur_x_label.text() if hasattr(self.ui, 'cur_x_label') else "0"
-        y = self.ui.cur_y_label.text() if hasattr(self.ui, 'cur_y_label') else "0"
+        x = self.ui.cur_x_label.text()
+        y = self.ui.cur_y_label.text()
         item_text = f"({x}, {y})"
         self.take_image_points_list.addItem(item_text)
 
@@ -220,8 +129,8 @@ class MainWindowControllerV2(QMainWindow):
 
     def add_component_coordinate(self):
         """Добавить текущую позицию как координату компонента."""
-        x = self.ui.cur_x_label.text() if hasattr(self.ui, 'cur_x_label') else "0"
-        y = self.ui.cur_y_label.text() if hasattr(self.ui, 'cur_y_label') else "0"
+        x = self.ui.cur_x_label.text()
+        y = self.ui.cur_y_label.text()
         item_text = f"Комп: ({x}, {y})"
         self.component_coordinates_list.addItem(item_text)
 
@@ -385,8 +294,8 @@ class MainWindowControllerV2(QMainWindow):
             frame = self.cam.get_image()
             if frame is not None:
                 # TODO: Сохранить изображение с метаданными (координаты, время и т.д.)
-                x = self.ui.cur_x_label.text() if hasattr(self.ui, 'cur_x_label') else "0"
-                y = self.ui.cur_y_label.text() if hasattr(self.ui, 'cur_y_label') else "0"
+                x = self.ui.cur_x_label.text()
+                y = self.ui.cur_y_label.text()
                 print(f"Съёмка изображения в позиции ({x}, {y})")
                 self.show_error("Функция сохранения изображения ещё не реализована")
         except Exception as e:
@@ -409,21 +318,19 @@ class MainWindowControllerV2(QMainWindow):
     # === Camera and CNC logic (unchanged) ===
 
     def clear_image_display(self):
-        if self.image_label is not None and hasattr(self.ui, 'image_displayer'):
-            self.image_label.clear()
-            self.ui.image_displayer.setStyleSheet("background-color: black;")
-            self.image_label.move(0, 0)
-            self.image_label.resize(self.ui.image_displayer.size())
+        self.image_label.clear()
+        self.ui.image_displayer.setStyleSheet("background-color: black;")
+        self.image_label.move(0, 0)
+        self.image_label.resize(self.ui.image_displayer.size())
 
     def toggle_camera(self):
         if self.cam is None:
-            port_text = self.ui.camera_port_lineEdit.text() if hasattr(self.ui, 'camera_port_lineEdit') else "/dev/video4"
+            port_text = self.ui.camera_port_lineEdit.text()
             try:
                 port = int(port_text) if port_text.isdigit() else port_text
                 self.cam = ThreadSafeCameraReader(camera_id=port)
                 self.timer.start(200)
-                if hasattr(self.ui, 'connect_camera_button'):
-                    self.ui.connect_camera_button.setText("Отключить камеру")
+                self.ui.connect_camera_button.setText("Отключить камеру")
             except Exception as e:
                 self.show_error(f"Ошибка при открытии камеры: {str(e)}")
                 self.cam = None
@@ -435,8 +342,7 @@ class MainWindowControllerV2(QMainWindow):
             except Exception:
                 pass
             self.cam = None
-            if hasattr(self.ui, 'connect_camera_button'):
-                self.ui.connect_camera_button.setText("Подключить")
+            self.ui.connect_camera_button.setText("Подключить")
             self.clear_image_display()
 
     def update_frame(self):
@@ -458,23 +364,22 @@ class MainWindowControllerV2(QMainWindow):
             bytes_per_line = ch * w
             qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image)
-            if hasattr(self.ui, 'image_displayer') and self.image_label is not None:
-                scaled_pixmap = pixmap.scaled(
-                    self.ui.image_displayer.width(),
-                    self.ui.image_displayer.height(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self.image_label.setPixmap(scaled_pixmap)
-                self.image_label.resize(self.ui.image_displayer.size())
-                self.ui.image_displayer.setStyleSheet("")
+            scaled_pixmap = pixmap.scaled(
+                self.ui.image_displayer.width(),
+                self.ui.image_displayer.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            self.image_label.resize(self.ui.image_displayer.size())
+            self.ui.image_displayer.setStyleSheet("")
         except Exception as e:
             self.timer.stop()
             self.show_error(f"Ошибка при отображении кадра: {str(e)}")
             self.clear_image_display()
 
     def resizeEvent(self, event):
-        if hasattr(self, 'image_label') and self.image_label is not None and hasattr(self.ui, 'image_displayer'):
+        if self.image_label is not None:
             self.image_label.resize(self.ui.image_displayer.size())
         super().resizeEvent(event)
 
@@ -482,33 +387,28 @@ class MainWindowControllerV2(QMainWindow):
         if self.driver:
             print(f"Moving {axis} by {steps} mm")
             if axis == 'X':
-                current = float(self.ui.cur_x_label.text() or "0") if hasattr(self.ui, 'cur_x_label') else 0.0
+                current = float(self.ui.cur_x_label.text() or "0")
                 if current + steps <= 0:
                     self.driver.move_x_rel(int(steps))
-                    if hasattr(self.ui, 'cur_x_label'):
-                        self.ui.cur_x_label.setText(str(round(current + steps, 2)))
+                    self.ui.cur_x_label.setText(str(round(current + steps, 2)))
                 else:
-                    if hasattr(self.ui, 'cur_x_label'):
-                        self.ui.cur_x_label.setText("0.0")
+                    self.ui.cur_x_label.setText("0.0")
                     self.driver.move_x(0)
                     print('Out of range axis X')
             elif axis == 'Y':
                 self.driver.move_y_rel(int(steps))
-                current = float(self.ui.cur_y_label.text() or "0") if hasattr(self.ui, 'cur_y_label') else 0.0
-                if hasattr(self.ui, 'cur_y_label'):
-                    self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+                current = float(self.ui.cur_y_label.text() or "0")
+                self.ui.cur_y_label.setText(str(round(current + steps, 2)))
         else:
             print('ERROR! Connect to CNC')
 
     def zero_axis(self, axis):
         if self.driver:
             if axis == 'X':
-                if hasattr(self.ui, 'cur_x_label'):
-                    self.ui.cur_x_label.setText("0.0")
+                self.ui.cur_x_label.setText("0.0")
                 self.driver.move_x(0)
             elif axis == 'Y':
-                if hasattr(self.ui, 'cur_y_label'):
-                    self.ui.cur_y_label.setText("0.0")
+                self.ui.cur_y_label.setText("0.0")
                 self.driver.move_y(0)
             print(f"Zeroing {axis} axis")
         else:
@@ -518,39 +418,33 @@ class MainWindowControllerV2(QMainWindow):
         if self.driver:
             self.driver.move_x(0)
             self.driver.move_y(0)
-            if hasattr(self.ui, 'cur_x_label'):
-                self.ui.cur_x_label.setText("0.0")
-            if hasattr(self.ui, 'cur_y_label'):
-                self.ui.cur_y_label.setText("0.0")
+            self.ui.cur_x_label.setText("0.0")
+            self.ui.cur_y_label.setText("0.0")
             print("Zeroing all axes")
         else:
             print('ERROR! Connect to CNC')
 
     def toggle_cnc_connection(self):
         if not self.cnc_connected:
-            port = self.ui.port_lineEdit.text() if hasattr(self.ui, 'port_lineEdit') else "/dev/ttyUSB0"
+            port = self.ui.port_lineEdit.text()
             try:
                 self.driver = CncMachineDriver(port, baud_rate=115200, timeout=2)
                 self.driver.open_serial_port()
                 self.driver.unlock()
                 self.driver.set_units_and_mode()
                 self.cnc_connected = True
-                if hasattr(self.ui, 'connect_cnc_button'):
-                    self.ui.connect_cnc_button.setText("Отключить CNC")
+                self.ui.connect_cnc_button.setText("Отключить CNC")
                 print(f"Подключено к CNC на {port}")
             except Exception as e:
                 self.show_error(f"Не удалось подключиться к CNC: {str(e)}")
         else:
-            if hasattr(self.ui, 'cur_x_label'):
-                self.ui.cur_x_label.setText("0.0")
-            if hasattr(self.ui, 'cur_y_label'):
-                self.ui.cur_y_label.setText("0.0")
+            self.ui.cur_x_label.setText("0.0")
+            self.ui.cur_y_label.setText("0.0")
             if self.driver:
                 self.driver.move_x(0)
                 self.driver.move_y(0)
             self.cnc_connected = False
-            if hasattr(self.ui, 'connect_cnc_button'):
-                self.ui.connect_cnc_button.setText("Подключить")
+            self.ui.connect_cnc_button.setText("Подключить")
             if self.driver:
                 self.driver.close_serial_port()
             self.driver = None
