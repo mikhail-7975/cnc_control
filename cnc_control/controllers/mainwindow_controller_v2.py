@@ -13,8 +13,9 @@ from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget
 )
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF
+import math
 # Try to import UI v2 - adjust class name if needed
 import sys
 from pathlib import Path
@@ -616,6 +617,205 @@ class MainWindowControllerV2(QMainWindow):
         event.accept()
 
 
+class ImageDisplayWidget(QWidget):
+    """Виджет для отображения изображения с возможностью разметки."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.original_image = None
+        self.display_pixmap = None
+        self.bounding_boxes = []  # Список bounding boxes: [x1, y1, x2, y2, angle, selected]
+        self.current_box_start = None  # Начальная точка текущего бокса
+        self.drawing_box = False
+        self.selected_box_index = None
+        self.rotation_mode = False
+        self.rotation_start_angle = 0
+        self.image_offset = QPoint(0, 0)
+        self.last_mouse_pos = QPoint(0, 0)
+        
+    def set_image(self, pixmap):
+        """Установить изображение для отображения."""
+        self.original_image = pixmap
+        self.display_pixmap = pixmap
+        self.update()
+    
+    def paintEvent(self, event):
+        """Отрисовка изображения и bounding boxes."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Рисуем изображение
+        if self.display_pixmap:
+            # Центрируем изображение
+            pixmap_rect = self.display_pixmap.rect()
+            widget_rect = self.rect()
+            x = (widget_rect.width() - pixmap_rect.width()) // 2
+            y = (widget_rect.height() - pixmap_rect.height()) // 2
+            painter.drawPixmap(x, y, self.display_pixmap)
+            self.image_offset = QPoint(x, y)
+        else:
+            self.image_offset = QPoint(0, 0)
+        
+        # Рисуем bounding boxes
+        for i, box in enumerate(self.bounding_boxes):
+            x1, y1, x2, y2, angle, selected = box
+            is_selected = (i == self.selected_box_index)
+            
+            # Преобразуем координаты с учетом смещения изображения
+            p1 = QPoint(int(x1) + self.image_offset.x(), int(y1) + self.image_offset.y())
+            p2 = QPoint(int(x2) + self.image_offset.x(), int(y2) + self.image_offset.y())
+            
+            # Вычисляем центр и углы прямоугольника
+            center_x = (p1.x() + p2.x()) / 2
+            center_y = (p1.y() + p2.y()) / 2
+            center = QPoint(int(center_x), int(center_y))
+            
+            width = abs(p2.x() - p1.x())
+            height = abs(p2.y() - p1.y())
+            
+            # Создаем прямоугольник
+            rect = QRectF(p1.x(), p1.y(), width, height)
+            rect = rect.normalized()
+            
+            # Применяем поворот
+            painter.save()
+            painter.translate(center)
+            painter.rotate(angle)
+            painter.translate(-center)
+            
+            # Рисуем прямоугольник
+            pen = QPen(QColor(0, 255, 0) if is_selected else QColor(255, 0, 0), 2)
+            painter.setPen(pen)
+            painter.drawRect(rect)
+            
+            # Рисуем углы
+            corner_size = 8
+            corners = [
+                QRectF(rect.left() - corner_size/2, rect.top() - corner_size/2, corner_size, corner_size),
+                QRectF(rect.right() - corner_size/2, rect.top() - corner_size/2, corner_size, corner_size),
+                QRectF(rect.right() - corner_size/2, rect.bottom() - corner_size/2, corner_size, corner_size),
+                QRectF(rect.left() - corner_size/2, rect.bottom() - corner_size/2, corner_size, corner_size)
+            ]
+            for corner in corners:
+                painter.fillRect(corner, pen.color())
+            
+            painter.restore()
+            
+            # Рисуем текущий бокс при создании
+            if self.drawing_box and self.current_box_start:
+                temp_rect = QRectF(
+                    min(self.current_box_start.x(), self.last_mouse_pos.x()) + self.image_offset.x(),
+                    min(self.current_box_start.y(), self.last_mouse_pos.y()) + self.image_offset.y(),
+                    abs(self.last_mouse_pos.x() - self.current_box_start.x()),
+                    abs(self.last_mouse_pos.y() - self.current_box_start.y())
+                )
+                pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
+                painter.setPen(pen)
+                painter.drawRect(temp_rect)
+    
+    def mousePressEvent(self, event):
+        """Обработка нажатия мыши."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Преобразуем координаты относительно изображения
+            widget_pos = event.position().toPoint()
+            pos = widget_pos - self.image_offset
+            
+            # Проверяем, что клик внутри изображения
+            if not self.display_pixmap:
+                return
+            
+            pixmap_rect = self.display_pixmap.rect()
+            if not (0 <= pos.x() < pixmap_rect.width() and 0 <= pos.y() < pixmap_rect.height()):
+                return
+            
+            if self.rotation_mode and self.selected_box_index is not None:
+                # Режим поворота
+                box = self.bounding_boxes[self.selected_box_index]
+                x1, y1, x2, y2, angle, _ = box
+                center_x = (x1 + x2) / 2
+                center_y = (y1 + y2) / 2
+                dx = pos.x() - center_x
+                dy = pos.y() - center_y
+                self.rotation_start_angle = math.degrees(math.atan2(dy, dx)) - angle
+            else:
+                # Проверяем, кликнули ли по существующему боксу
+                clicked_box = None
+                for i, box in enumerate(self.bounding_boxes):
+                    x1, y1, x2, y2, angle, _ = box
+                    
+                    # Простая проверка попадания в прямоугольник (в координатах изображения)
+                    if min(x1, x2) <= pos.x() <= max(x1, x2) and min(y1, y2) <= pos.y() <= max(y1, y2):
+                        clicked_box = i
+                        break
+                
+                if clicked_box is not None:
+                    self.selected_box_index = clicked_box
+                    # Обновляем флаг выбранности
+                    for i, box in enumerate(self.bounding_boxes):
+                        x1, y1, x2, y2, angle, _ = box
+                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box)
+                    self.update()
+                else:
+                    # Начинаем создание нового бокса
+                    self.current_box_start = pos
+                    self.drawing_box = True
+                    self.selected_box_index = None
+        
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Правый клик - режим поворота
+            if self.selected_box_index is not None:
+                self.rotation_mode = True
+    
+    def mouseMoveEvent(self, event):
+        """Обработка движения мыши."""
+        widget_pos = event.position().toPoint()
+        self.last_mouse_pos = widget_pos - self.image_offset
+        
+        if self.rotation_mode and self.selected_box_index is not None:
+            # Поворот выбранного бокса
+            box = self.bounding_boxes[self.selected_box_index]
+            x1, y1, x2, y2, angle, _ = box
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            dx = self.last_mouse_pos.x() - center_x
+            dy = self.last_mouse_pos.y() - center_y
+            new_angle = math.degrees(math.atan2(dy, dx)) - self.rotation_start_angle
+            self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, new_angle, True)
+            self.update()
+        elif self.drawing_box:
+            self.update()
+    
+    def mouseReleaseEvent(self, event):
+        """Обработка отпускания мыши."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.drawing_box and self.current_box_start:
+                # Завершаем создание бокса
+                widget_pos = event.position().toPoint()
+                end_pos = widget_pos - self.image_offset
+                x1, y1 = self.current_box_start.x(), self.current_box_start.y()
+                x2, y2 = end_pos.x(), end_pos.y()
+                
+                # Проверяем, что бокс имеет ненулевой размер
+                if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
+                    # Добавляем новый бокс (начало, конец, угол=0, выбран)
+                    self.bounding_boxes.append((x1, y1, x2, y2, 0.0, True))
+                    # Снимаем выделение с других боксов
+                    for i in range(len(self.bounding_boxes) - 1):
+                        box = self.bounding_boxes[i]
+                        self.bounding_boxes[i] = (box[0], box[1], box[2], box[3], box[4], False)
+                    self.selected_box_index = len(self.bounding_boxes) - 1
+                
+                self.drawing_box = False
+                self.current_box_start = None
+                self.update()
+            
+            self.rotation_mode = False
+        
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.rotation_mode = False
+
+
 class ImageMarkingWindow(QWidget):
     """Окно для разметки изображения."""
     
@@ -629,11 +829,9 @@ class ImageMarkingWindow(QWidget):
         # Создаем layout
         layout = QVBoxLayout(self)
         
-        # Создаем QLabel для отображения изображения
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setScaledContents(False)
-        layout.addWidget(self.image_label)
+        # Создаем кастомный виджет для отображения изображения с разметкой
+        self.image_widget = ImageDisplayWidget()
+        layout.addWidget(self.image_widget)
         
         # Отображаем изображение
         self.display_image(image)
@@ -669,11 +867,8 @@ class ImageMarkingWindow(QWidget):
                     Qt.TransformationMode.SmoothTransformation
                 )
             
-            # Устанавливаем изображение в label
-            self.image_label.setPixmap(pixmap)
-            
-            # Не изменяем размер окна, если он уже был установлен (например, из главного окна)
-            # Размер окна будет установлен при создании или оставлен по умолчанию
+            # Устанавливаем изображение в виджет
+            self.image_widget.set_image(pixmap)
             
         except Exception as e:
             error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
@@ -683,16 +878,15 @@ class ImageMarkingWindow(QWidget):
 
     def resizeEvent(self, event):
         """Обработка изменения размера окна разметки."""
-        if self.image_label is not None:
+        if hasattr(self, 'image_widget') and hasattr(self, 'original_pixmap'):
             # Масштабируем изображение при изменении размера окна
-            if hasattr(self, 'original_pixmap'):
-                scaled_pixmap = self.original_pixmap.scaled(
-                    self.width() - 50,
-                    self.height() - 50,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self.image_label.setPixmap(scaled_pixmap)
+            scaled_pixmap = self.original_pixmap.scaled(
+                self.width() - 50,
+                self.height() - 50,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_widget.set_image(scaled_pixmap)
         super().resizeEvent(event)
     
     def closeEvent(self, event):
