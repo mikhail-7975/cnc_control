@@ -1,10 +1,10 @@
 import sys
 
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel 
-from mainwindow_controller import MainWindowController
+from cnc_control.controllers.mainwindow_controller_v2 import MainWindowControllerV2
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = MainWindowController()
+    window = MainWindowControllerV2()
     window.show()
     sys.exit(app.exec())

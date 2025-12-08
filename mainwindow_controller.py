@@ -88,6 +88,8 @@ class MainWindowController(QMainWindow):
 
         self.take_image_current_filename = "keypoints/"
 
+        self.inspection_coords_of_elements_filename = ""
+
         # Connect signals
         self.setup_connections()
 
@@ -128,6 +130,8 @@ class MainWindowController(QMainWindow):
 
         # CNC connection button
         self.ui.connect_cnc_button.clicked.connect(self.toggle_cnc_connection)
+
+        self.ui.inspection_control_widget.select_inspection_task_pushButton.clicked.connect(self.__select_inspection_filename)
 
         # Coordinate list management
         self.ui.add_point_button.clicked.connect(self.add_image_point)
@@ -384,6 +388,19 @@ class MainWindowController(QMainWindow):
         logger.error("ERROR: %s", message)
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Ошибка", message)
+
+    def __select_inspection_filename(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            parent=self,                            # Parent widget
+            caption="Select a File",                  # Dialog window title
+            directory="",                               # Default directory (empty string defaults to current working directory)
+            filter="All (*.*)" # File filters
+        )
+        if not filename:
+            return
+        self.inspection_coords_of_elements_filename = filename
+        self.ui.inspection_control_widget.selected_file_name_label.setText(filename)
+
 
     def __new_file_button_clicked(self):
         filename, _ = QFileDialog.getSaveFileName(

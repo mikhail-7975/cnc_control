@@ -102,6 +102,33 @@ class JoystickGroup(QWidget):
         button.setObjectName(name)
         self.joystick_buttons_layout.addWidget(button, row, col, 1, 1)
         return button
+    
+class InspectionGroup(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.inspection_groupbox = QGroupBox()
+        self.inspection_groupbox.setMaximumSize(QtCore.QSize(380, 320))
+        self.inspection_groupbox.setTitle("")
+        self.inspection_groupbox.setObjectName("inspection_groupbox")
+        
+        self.inspection_buttons_layout = QGridLayout(self.inspection_groupbox)
+        self.inspection_buttons_layout.setObjectName("gridLayout_inspection")
+        
+        self.select_inspection_task_label = QLabel()
+        self.select_inspection_task_label.setText("Выберите файл с расположением элементов")
+
+        self.select_inspection_task_pushButton = QPushButton()
+        self.select_inspection_task_pushButton.setText("Выбрать")
+
+        self.selected_file_name_label = QLabel()
+        self.selected_file_name_label.setText("--")
+
+        self.inspection_buttons_layout.addWidget(self.select_inspection_task_label, 0, 0, 1, 1)
+        self.inspection_buttons_layout.addWidget(self.select_inspection_task_pushButton, 1, 0, 1, 1)
+        self.inspection_buttons_layout.addWidget(self.selected_file_name_label, 2, 0, 1, 1)
+
+        self.setLayout(self.inspection_buttons_layout)
+
 
 
 if __name__ == "__main__":
