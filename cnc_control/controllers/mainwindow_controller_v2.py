@@ -11,7 +11,7 @@ import cv2
 import time
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
@@ -47,8 +47,7 @@ class MainWindowControllerV2(QMainWindow):
 
         # Camera variables
         self.cam = None
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_frame)
+        self.timer = QTimer(self)
 
         # image_label
         self.image_label = QLabel(self.ui.image_displayer)
@@ -66,6 +65,9 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_images = []  # Список загруженных эталонных изображений (numpy arrays)
         self.current_etalon_index = -1  # Индекс текущего изображения (-1 если нет изображений)
         
+        # Reference to marking window to prevent garbage collection
+        self.marking_window = None
+        
         # Etalon image display label
         self.etalon_image_label = QLabel(self.ui.display_etalon_image_widget)
         self.etalon_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -79,6 +81,7 @@ class MainWindowControllerV2(QMainWindow):
     def setup_connections(self):
         # Camera
         self.ui.connect_camera_button.clicked.connect(self.toggle_camera)
+        self.timer.timeout.connect(self.update_frame)
 
         # Joystick buttons (X-axis)
         self.ui.left_1_button.clicked.connect(lambda: self.move_axis('X', -1))
@@ -118,6 +121,7 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.load_etalon_images_button.clicked.connect(self.load_etalon_images)
         self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
         self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
+        self.ui.mark_image_button.clicked.connect(self.open_mark_image_window)
 
     # === Coordinate list functionality ===
 
@@ -425,6 +429,37 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_image_label.move(0, 0)
         self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
 
+    def open_mark_image_window(self):
+        """Открыть новое окно для разметки изображения."""
+        if not self.etalon_images or self.current_etalon_index < 0:
+            self.show_error("Нет изображения для разметки. Загрузите эталонные изображения.")
+            return
+        
+        try:
+            # Получаем текущее изображение
+            current_image = self.etalon_images[self.current_etalon_index]
+            
+            # Если окно уже открыто, просто активируем его
+            if self.marking_window is not None and self.marking_window.isVisible():
+                self.marking_window.raise_()
+                self.marking_window.activateWindow()
+                return
+            
+            # Создаем и показываем новое окно как отдельное окно (не дочернее)
+            self.marking_window = ImageMarkingWindow(current_image, parent=None)
+            # Сохраняем ссылку на главное окно в окне разметки для очистки при закрытии
+            self.marking_window.main_window_ref = self
+            
+            # Устанавливаем размер окна такой же, как у главного окна
+            main_window_size = self.size()
+            self.marking_window.resize(main_window_size)
+            
+            self.marking_window.show()
+            self.marking_window.raise_()  # Поднимаем окно на передний план
+            self.marking_window.activateWindow()  # Активируем окно
+        except Exception as e:
+            self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
+
     # === Camera and CNC logic (unchanged) ===
 
     def clear_image_display(self):
@@ -489,6 +524,7 @@ class MainWindowControllerV2(QMainWindow):
             self.clear_image_display()
 
     def resizeEvent(self, event):
+        """Обработка изменения размера главного окна."""
         if self.image_label is not None:
             self.image_label.resize(self.ui.image_displayer.size())
         if self.etalon_image_label is not None:
@@ -577,6 +613,93 @@ class MainWindowControllerV2(QMainWindow):
             self.driver.move_x(0)
             self.driver.move_y(0)
             self.driver.close_serial_port()
+        event.accept()
+
+
+class ImageMarkingWindow(QWidget):
+    """Окно для разметки изображения."""
+    
+    def __init__(self, image, parent=None):
+        super().__init__(parent)
+        # Устанавливаем флаги окна для создания отдельного окна
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setWindowTitle("Разметка изображения")
+        self.setMinimumSize(800, 600)
+        
+        # Создаем layout
+        layout = QVBoxLayout(self)
+        
+        # Создаем QLabel для отображения изображения
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setScaledContents(False)
+        layout.addWidget(self.image_label)
+        
+        # Отображаем изображение
+        self.display_image(image)
+    
+    def display_image(self, image):
+        """Отобразить изображение в окне."""
+        try:
+            # Конвертируем BGR в RGB для Qt
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            
+            # Сохраняем оригинальное изображение для возможного использования
+            self.original_pixmap = pixmap
+            
+            # Устанавливаем размер окна под изображение (с ограничениями)
+            max_width = 1920
+            max_height = 1080
+            img_width = w
+            img_height = h
+            
+            # Масштабируем если изображение слишком большое
+            if img_width > max_width or img_height > max_height:
+                scale = min(max_width / img_width, max_height / img_height)
+                img_width = int(img_width * scale)
+                img_height = int(img_height * scale)
+                # Масштабируем pixmap для отображения
+                pixmap = pixmap.scaled(
+                    img_width, img_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+            
+            # Устанавливаем изображение в label
+            self.image_label.setPixmap(pixmap)
+            
+            # Не изменяем размер окна, если он уже был установлен (например, из главного окна)
+            # Размер окна будет установлен при создании или оставлен по умолчанию
+            
+        except Exception as e:
+            error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
+            layout = self.layout()
+            if layout:
+                layout.addWidget(error_label)
+
+    def resizeEvent(self, event):
+        """Обработка изменения размера окна разметки."""
+        if self.image_label is not None:
+            # Масштабируем изображение при изменении размера окна
+            if hasattr(self, 'original_pixmap'):
+                scaled_pixmap = self.original_pixmap.scaled(
+                    self.width() - 50,
+                    self.height() - 50,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.image_label.setPixmap(scaled_pixmap)
+        super().resizeEvent(event)
+    
+    def closeEvent(self, event):
+        """Обработка закрытия окна разметки."""
+        # Очищаем ссылку в главном окне, если она существует
+        if hasattr(self, 'main_window_ref'):
+            self.main_window_ref.marking_window = None
         event.accept()
 
 
