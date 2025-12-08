@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor
 import math
 # Try to import UI v2 - adjust class name if needed
 import sys
@@ -633,12 +633,93 @@ class ImageDisplayWidget(QWidget):
         self.rotation_start_angle = 0
         self.image_offset = QPoint(0, 0)
         self.last_mouse_pos = QPoint(0, 0)
+        self.dragging_box = False
+        self.drag_type = None  # 'corner', 'edge', 'move', or None
+        self.drag_corner_index = None  # 0-3 for corners
+        self.drag_start_pos = None
+        self.drag_start_box = None  # Original box coordinates when drag started
         
     def set_image(self, pixmap):
         """Установить изображение для отображения."""
         self.original_image = pixmap
         self.display_pixmap = pixmap
         self.update()
+    
+    def get_box_corners(self, box):
+        """Получить координаты углов бокса с учетом поворота."""
+        x1, y1, x2, y2, angle, _ = box
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        width = abs(x2 - x1)
+        height = abs(y2 - y1)
+        
+        # Углы без поворота
+        corners = [
+            (x1, y1),  # top-left
+            (x2, y1),  # top-right
+            (x2, y2),  # bottom-right
+            (x1, y2)   # bottom-left
+        ]
+        
+        # Применяем поворот
+        angle_rad = math.radians(angle)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        
+        rotated_corners = []
+        for cx, cy in corners:
+            # Переводим в систему координат с центром в центре бокса
+            dx = cx - center_x
+            dy = cy - center_y
+            # Поворачиваем
+            rx = dx * cos_a - dy * sin_a
+            ry = dx * sin_a + dy * cos_a
+            # Возвращаем в исходную систему координат
+            rotated_corners.append((rx + center_x, ry + center_y))
+        
+        return rotated_corners
+    
+    def detect_box_interaction(self, pos, box):
+        """Определить тип взаимодействия с боксом: угол, край или центр."""
+        x1, y1, x2, y2, angle, _ = box
+        corners = self.get_box_corners(box)
+        
+        # Проверяем попадание в углы (радиус 10 пикселей)
+        corner_radius = 10
+        for i, (cx, cy) in enumerate(corners):
+            dist = math.sqrt((pos.x() - cx)**2 + (pos.y() - cy)**2)
+            if dist < corner_radius:
+                return 'corner', i
+        
+        # Проверяем попадание на края
+        edge_threshold = 5
+        for i in range(4):
+            p1 = corners[i]
+            p2 = corners[(i + 1) % 4]
+            
+            # Расстояние от точки до отрезка
+            A = pos.x() - p1[0]
+            B = pos.y() - p1[1]
+            C = p2[0] - p1[0]
+            D = p2[1] - p1[1]
+            
+            dot = A * C + B * D
+            len_sq = C * C + D * D
+            if len_sq > 0:
+                param = dot / len_sq
+                
+                if 0 <= param <= 1:
+                    xx = p1[0] + param * C
+                    yy = p1[1] + param * D
+                    dist = math.sqrt((pos.x() - xx)**2 + (pos.y() - yy)**2)
+                    if dist < edge_threshold:
+                        return 'edge', i
+        
+        # Проверяем попадание в центр (простая проверка прямоугольника)
+        if min(x1, x2) <= pos.x() <= max(x1, x2) and min(y1, y2) <= pos.y() <= max(y1, y2):
+            return 'move', None
+        
+        return None, None
     
     def paintEvent(self, event):
         """Отрисовка изображения и bounding boxes."""
@@ -741,11 +822,14 @@ class ImageDisplayWidget(QWidget):
             else:
                 # Проверяем, кликнули ли по существующему боксу
                 clicked_box = None
-                for i, box in enumerate(self.bounding_boxes):
-                    x1, y1, x2, y2, angle, _ = box
-                    
-                    # Простая проверка попадания в прямоугольник (в координатах изображения)
-                    if min(x1, x2) <= pos.x() <= max(x1, x2) and min(y1, y2) <= pos.y() <= max(y1, y2):
+                interaction_type = None
+                interaction_index = None
+                
+                # Проверяем боксы в обратном порядке (сначала верхние)
+                for i in range(len(self.bounding_boxes) - 1, -1, -1):
+                    box = self.bounding_boxes[i]
+                    interaction_type, interaction_index = self.detect_box_interaction(pos, box)
+                    if interaction_type is not None:
                         clicked_box = i
                         break
                 
@@ -755,12 +839,20 @@ class ImageDisplayWidget(QWidget):
                     for i, box in enumerate(self.bounding_boxes):
                         x1, y1, x2, y2, angle, _ = box
                         self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box)
+                    
+                    # Начинаем перетаскивание
+                    self.dragging_box = True
+                    self.drag_type = interaction_type
+                    self.drag_corner_index = interaction_index
+                    self.drag_start_pos = pos
+                    self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
                     # Начинаем создание нового бокса
                     self.current_box_start = pos
                     self.drawing_box = True
                     self.selected_box_index = None
+                    self.dragging_box = False
         
         elif event.button() == Qt.MouseButton.RightButton:
             # Правый клик - режим поворота
@@ -772,6 +864,47 @@ class ImageDisplayWidget(QWidget):
         widget_pos = event.position().toPoint()
         self.last_mouse_pos = widget_pos - self.image_offset
         
+        # Обновляем курсор в зависимости от позиции
+        if not self.dragging_box and not self.drawing_box and not self.rotation_mode:
+            pos = widget_pos - self.image_offset
+            cursor_set = False
+            
+            # Проверяем все боксы для определения типа курсора
+            for i, box in enumerate(self.bounding_boxes):
+                interaction_type, interaction_index = self.detect_box_interaction(pos, box)
+                if interaction_type == 'corner':
+                    self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+                    cursor_set = True
+                    break
+                elif interaction_type == 'edge':
+                    # Определяем направление края для правильного курсора
+                    # Вычисляем фактическое направление края (с учетом поворота)
+                    corners = self.get_box_corners(box)
+                    edge_idx = interaction_index
+                    p1 = corners[edge_idx]
+                    p2 = corners[(edge_idx + 1) % 4]
+                    
+                    # Вычисляем угол края
+                    edge_dx = p2[0] - p1[0]
+                    edge_dy = p2[1] - p1[1]
+                    edge_angle = math.degrees(math.atan2(abs(edge_dy), abs(edge_dx)))
+                    
+                    # Если угол больше 45 градусов, край более вертикальный
+                    # Если угол меньше 45 градусов, край более горизонтальный
+                    if edge_angle > 45:
+                        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+                    else:
+                        self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
+                    cursor_set = True
+                    break
+                elif interaction_type == 'move':
+                    self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+                    cursor_set = True
+                    break
+            
+            if not cursor_set:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        
         if self.rotation_mode and self.selected_box_index is not None:
             # Поворот выбранного бокса
             box = self.bounding_boxes[self.selected_box_index]
@@ -782,6 +915,108 @@ class ImageDisplayWidget(QWidget):
             dy = self.last_mouse_pos.y() - center_y
             new_angle = math.degrees(math.atan2(dy, dx)) - self.rotation_start_angle
             self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, new_angle, True)
+            self.update()
+        elif self.dragging_box and self.selected_box_index is not None:
+            # Перетаскивание бокса
+            box = self.bounding_boxes[self.selected_box_index]
+            x1, y1, x2, y2, angle, _ = box
+            dx = self.last_mouse_pos.x() - self.drag_start_pos.x()
+            dy = self.last_mouse_pos.y() - self.drag_start_pos.y()
+            
+            if self.drag_type == 'move':
+                # Перемещение всего бокса
+                new_x1 = x1 + dx
+                new_y1 = y1 + dy
+                new_x2 = x2 + dx
+                new_y2 = y2 + dy
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
+            elif self.drag_type == 'corner':
+                # Изменение размера через угол
+                corners = self.get_box_corners(self.drag_start_box)
+                corner = corners[self.drag_corner_index]
+                
+                # Новые координаты угла
+                new_corner_x = corner[0] + dx
+                new_corner_y = corner[1] + dy
+                
+                # Находим противоположный угол
+                opposite_index = (self.drag_corner_index + 2) % 4
+                opposite_corner = corners[opposite_index]
+                
+                # Обновляем координаты бокса
+                new_x1 = min(new_corner_x, opposite_corner[0])
+                new_y1 = min(new_corner_y, opposite_corner[1])
+                new_x2 = max(new_corner_x, opposite_corner[0])
+                new_y2 = max(new_corner_y, opposite_corner[1])
+                
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
+            elif self.drag_type == 'edge':
+                # Изменение размера через край
+                edge = self.drag_corner_index
+                
+                # Работаем в системе координат бокса (до поворота)
+                orig_x1, orig_y1, orig_x2, orig_y2, orig_angle, _ = self.drag_start_box
+                center_x = (orig_x1 + orig_x2) / 2
+                center_y = (orig_y1 + orig_y2) / 2
+                width = abs(orig_x2 - orig_x1)
+                height = abs(orig_y2 - orig_y1)
+                
+                # Преобразуем текущую позицию мыши в систему координат бокса
+                # (поворачиваем обратно на -angle)
+                angle_rad = -math.radians(angle)
+                cos_a = math.cos(angle_rad)
+                sin_a = math.sin(angle_rad)
+                
+                # Смещение мыши относительно центра
+                rel_x = self.last_mouse_pos.x() - center_x
+                rel_y = self.last_mouse_pos.y() - center_y
+                
+                # Поворачиваем в систему координат бокса
+                rotated_dx = rel_x * cos_a - rel_y * sin_a
+                rotated_dy = rel_x * sin_a + rel_y * cos_a
+                
+                # Начальное смещение в системе координат бокса
+                start_rel_x = self.drag_start_pos.x() - center_x
+                start_rel_y = self.drag_start_pos.y() - center_y
+                start_rotated_dx = start_rel_x * cos_a - start_rel_y * sin_a
+                start_rotated_dy = start_rel_x * sin_a + start_rel_y * cos_a
+                
+                # Изменение в системе координат бокса
+                delta_rotated_x = rotated_dx - start_rotated_dx
+                delta_rotated_y = rotated_dy - start_rotated_dy
+                
+                # Определяем, какой размер изменяется в зависимости от края
+                # edge 0: верхний край (y1 изменяется)
+                # edge 1: правый край (x2 изменяется)
+                # edge 2: нижний край (y2 изменяется)
+                # edge 3: левый край (x1 изменяется)
+                
+                new_x1, new_y1, new_x2, new_y2 = orig_x1, orig_y1, orig_x2, orig_y2
+                
+                if edge == 0:  # Верхний край - изменяем y1
+                    new_y1 = orig_y1 + delta_rotated_y
+                elif edge == 1:  # Правый край - изменяем x2
+                    new_x2 = orig_x2 + delta_rotated_x
+                elif edge == 2:  # Нижний край - изменяем y2
+                    new_y2 = orig_y2 + delta_rotated_y
+                elif edge == 3:  # Левый край - изменяем x1
+                    new_x1 = orig_x1 + delta_rotated_x
+                
+                # Убеждаемся, что размеры не стали отрицательными
+                if abs(new_x2 - new_x1) < 5:
+                    if edge == 1:
+                        new_x2 = new_x1 + 5
+                    elif edge == 3:
+                        new_x1 = new_x2 - 5
+                
+                if abs(new_y2 - new_y1) < 5:
+                    if edge == 2:
+                        new_y2 = new_y1 + 5
+                    elif edge == 0:
+                        new_y1 = new_y2 - 5
+                
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
+            
             self.update()
         elif self.drawing_box:
             self.update()
@@ -810,10 +1045,24 @@ class ImageDisplayWidget(QWidget):
                 self.current_box_start = None
                 self.update()
             
+            # Завершаем перетаскивание
+            if self.dragging_box:
+                self.dragging_box = False
+                self.drag_type = None
+                self.drag_corner_index = None
+                self.drag_start_pos = None
+                self.drag_start_box = None
+            
             self.rotation_mode = False
         
         elif event.button() == Qt.MouseButton.RightButton:
             self.rotation_mode = False
+            if self.dragging_box:
+                self.dragging_box = False
+                self.drag_type = None
+                self.drag_corner_index = None
+                self.drag_start_pos = None
+                self.drag_start_box = None
 
 
 class ImageMarkingWindow(QWidget):
