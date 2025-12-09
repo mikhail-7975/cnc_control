@@ -638,6 +638,8 @@ class ImageDisplayWidget(QWidget):
         self.drag_corner_index = None  # 0-3 for corners
         self.drag_start_pos = None
         self.drag_start_box = None  # Original box coordinates when drag started
+        self.rotation_base_angle = 0.0
+        self.rotation_start_pointer_angle = 0.0
         
     def set_image(self, pixmap):
         """Установить изображение для отображения."""
@@ -679,10 +681,30 @@ class ImageDisplayWidget(QWidget):
         
         return rotated_corners
     
+    def get_rotation_handle(self, box, offset=20):
+        """Возвращает точку для ручки вращения (над верхним ребром)."""
+        corners = self.get_box_corners(box)
+        top_mid_x = (corners[0][0] + corners[1][0]) / 2
+        top_mid_y = (corners[0][1] + corners[1][1]) / 2
+        # Направление внешней нормали к верхнему ребру
+        edge_vec_x = corners[1][0] - corners[0][0]
+        edge_vec_y = corners[1][1] - corners[0][1]
+        edge_len = math.sqrt(edge_vec_x ** 2 + edge_vec_y ** 2) or 1.0
+        normal_x = -edge_vec_y / edge_len
+        normal_y = edge_vec_x / edge_len
+        handle_x = top_mid_x + normal_x * offset
+        handle_y = top_mid_y + normal_y * offset
+        return QPoint(int(handle_x), int(handle_y))
+    
     def detect_box_interaction(self, pos, box):
-        """Определить тип взаимодействия с боксом: угол, край или центр."""
+        """Определить тип взаимодействия с боксом: угол, край, центр или ручка вращения."""
         x1, y1, x2, y2, angle, _ = box
         corners = self.get_box_corners(box)
+        
+        # Ручка вращения
+        handle_point = self.get_rotation_handle(box)
+        if (pos - handle_point).manhattanLength() < 16:
+            return 'rotate', None
         
         # Проверяем попадание в углы (радиус 10 пикселей)
         corner_radius = 10
@@ -781,6 +803,13 @@ class ImageDisplayWidget(QWidget):
             for corner in corners:
                 painter.fillRect(corner, pen.color())
             
+            # Ручка вращения
+            handle_point = self.get_rotation_handle(box)
+            handle_rect = QRectF(handle_point.x() - corner_size / 2,
+                                  handle_point.y() - corner_size / 2,
+                                  corner_size, corner_size)
+            painter.fillRect(handle_rect, QColor(0, 200, 255))
+            
             painter.restore()
             
             # Рисуем текущий бокс при создании
@@ -818,7 +847,9 @@ class ImageDisplayWidget(QWidget):
                 center_y = (y1 + y2) / 2
                 dx = pos.x() - center_x
                 dy = pos.y() - center_y
-                self.rotation_start_angle = math.degrees(math.atan2(dy, dx)) - angle
+                pointer_angle = math.degrees(math.atan2(dy, dx))
+                self.rotation_base_angle = angle
+                self.rotation_start_pointer_angle = pointer_angle
             else:
                 # Проверяем, кликнули ли по существующему боксу
                 clicked_box = None
@@ -840,12 +871,25 @@ class ImageDisplayWidget(QWidget):
                         x1, y1, x2, y2, angle, _ = box
                         self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box)
                     
-                    # Начинаем перетаскивание
-                    self.dragging_box = True
-                    self.drag_type = interaction_type
-                    self.drag_corner_index = interaction_index
-                    self.drag_start_pos = pos
-                    self.drag_start_box = self.bounding_boxes[clicked_box]
+                    if interaction_type == 'rotate':
+                        # Начинаем вращение через ручку
+                        box = self.bounding_boxes[clicked_box]
+                        x1, y1, x2, y2, angle, _ = box
+                        center_x = (x1 + x2) / 2
+                        center_y = (y1 + y2) / 2
+                        dx = pos.x() - center_x
+                        dy = pos.y() - center_y
+                        pointer_angle = math.degrees(math.atan2(dy, dx))
+                        self.rotation_base_angle = angle
+                        self.rotation_start_pointer_angle = pointer_angle
+                        self.rotation_mode = True
+                    else:
+                        # Начинаем перетаскивание
+                        self.dragging_box = True
+                        self.drag_type = interaction_type
+                        self.drag_corner_index = interaction_index
+                        self.drag_start_pos = pos
+                        self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
                     # Начинаем создание нового бокса
@@ -892,9 +936,13 @@ class ImageDisplayWidget(QWidget):
                     # Если угол больше 45 градусов, край более вертикальный
                     # Если угол меньше 45 градусов, край более горизонтальный
                     if edge_angle > 45:
-                        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
-                    else:
                         self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
+                    else:
+                        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+                    cursor_set = True
+                    break
+                elif interaction_type == 'rotate':
+                    self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
                     cursor_set = True
                     break
                 elif interaction_type == 'move':
@@ -913,7 +961,8 @@ class ImageDisplayWidget(QWidget):
             center_y = (y1 + y2) / 2
             dx = self.last_mouse_pos.x() - center_x
             dy = self.last_mouse_pos.y() - center_y
-            new_angle = math.degrees(math.atan2(dy, dx)) - self.rotation_start_angle
+            pointer_angle = math.degrees(math.atan2(dy, dx))
+            new_angle = self.rotation_base_angle + (pointer_angle - self.rotation_start_pointer_angle)
             self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, new_angle, True)
             self.update()
         elif self.dragging_box and self.selected_box_index is not None:
