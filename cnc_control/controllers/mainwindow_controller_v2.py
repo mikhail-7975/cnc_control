@@ -14,7 +14,8 @@ from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea
+    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea,
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
@@ -1286,6 +1287,7 @@ class ImageMarkingWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window)
         self.setWindowTitle("Разметка изображения")
         self.setMinimumSize(800, 600)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         # Сохраняем имя изображения
         self.image_name = image_name if image_name is not None else "unknown"
@@ -1764,6 +1766,13 @@ class ImageMarkingWindow(QWidget):
         if hasattr(self, 'main_window_ref'):
             self.main_window_ref.marking_window = None
         event.accept()
+
+    def keyPressEvent(self, event):
+        """Enter/Return — переименование выбранного бокса."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.image_widget.rename_selected_bbox(self)
+            return
+        super().keyPressEvent(event)
 
 
 # Optional: Run standalone for testing
