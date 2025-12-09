@@ -11,7 +11,7 @@ import cv2
 import time
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor
@@ -625,7 +625,7 @@ class ImageDisplayWidget(QWidget):
         self.setMouseTracking(True)
         self.original_image = None
         self.display_pixmap = None
-        self.bounding_boxes = []  # Список bounding boxes: [x1, y1, x2, y2, angle, selected]
+        self.bounding_boxes = []  # Список bounding boxes: [x1, y1, x2, y2, angle, selected, name]
         self.current_box_start = None  # Начальная точка текущего бокса
         self.drawing_box = False
         self.selected_box_index = None
@@ -649,7 +649,7 @@ class ImageDisplayWidget(QWidget):
     
     def get_box_corners(self, box):
         """Получить координаты углов бокса с учетом поворота."""
-        x1, y1, x2, y2, angle, _ = box
+        x1, y1, x2, y2, angle, _, _name = box
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
         width = abs(x2 - x1)
@@ -762,7 +762,7 @@ class ImageDisplayWidget(QWidget):
         
         # Рисуем bounding boxes
         for i, box in enumerate(self.bounding_boxes):
-            x1, y1, x2, y2, angle, selected = box
+            x1, y1, x2, y2, angle, selected, name = box
             is_selected = (i == self.selected_box_index)
             
             # Преобразуем координаты с учетом смещения изображения
@@ -809,6 +809,24 @@ class ImageDisplayWidget(QWidget):
                                   handle_point.y() - corner_size / 2,
                                   corner_size, corner_size)
             painter.fillRect(handle_rect, QColor(0, 200, 255))
+
+            # Подпись (имя бокса)
+            if name:
+                painter.save()
+                painter.setPen(QPen(QColor(255, 255, 0)))
+                painter.setBrush(QColor(0, 0, 0, 160))
+                metrics = painter.fontMetrics()
+                text_width = metrics.horizontalAdvance(name)
+                text_height = metrics.height()
+                text_margin = 4
+                text_rect = QRectF(rect.left(), rect.top() - text_height - 2 * text_margin,
+                                   text_width + 2 * text_margin, text_height + 2 * text_margin)
+                painter.fillRect(text_rect, QColor(0, 0, 0, 160))
+                painter.setPen(QPen(QColor(255, 255, 0)))
+                painter.drawText(text_rect.adjusted(text_margin, text_margin, -text_margin, -text_margin),
+                                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                                 name)
+                painter.restore()
             
             painter.restore()
             
@@ -842,7 +860,7 @@ class ImageDisplayWidget(QWidget):
             if self.rotation_mode and self.selected_box_index is not None:
                 # Режим поворота
                 box = self.bounding_boxes[self.selected_box_index]
-                x1, y1, x2, y2, angle, _ = box
+                x1, y1, x2, y2, angle, _selected, name = box
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
                 dx = pos.x() - center_x
@@ -868,13 +886,13 @@ class ImageDisplayWidget(QWidget):
                     self.selected_box_index = clicked_box
                     # Обновляем флаг выбранности
                     for i, box in enumerate(self.bounding_boxes):
-                        x1, y1, x2, y2, angle, _ = box
-                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box)
+                        x1, y1, x2, y2, angle, _sel, name = box if len(box) > 6 else (*box, None)
+                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box, name)
                     
                     if interaction_type == 'rotate':
                         # Начинаем вращение через ручку
                         box = self.bounding_boxes[clicked_box]
-                        x1, y1, x2, y2, angle, _ = box
+                        x1, y1, x2, y2, angle, _, name = box
                         center_x = (x1 + x2) / 2
                         center_y = (y1 + y2) / 2
                         dx = pos.x() - center_x
@@ -956,32 +974,32 @@ class ImageDisplayWidget(QWidget):
         if self.rotation_mode and self.selected_box_index is not None:
             # Поворот выбранного бокса
             box = self.bounding_boxes[self.selected_box_index]
-            x1, y1, x2, y2, angle, _ = box
+            x1, y1, x2, y2, angle, _sel, name = box
             center_x = (x1 + x2) / 2
             center_y = (y1 + y2) / 2
             dx = self.last_mouse_pos.x() - center_x
             dy = self.last_mouse_pos.y() - center_y
             pointer_angle = math.degrees(math.atan2(dy, dx))
             new_angle = self.rotation_base_angle + (pointer_angle - self.rotation_start_pointer_angle)
-            self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, new_angle, True)
+            self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, new_angle, True, name)
             self.update()
         elif self.dragging_box and self.selected_box_index is not None:
             # Перетаскивание бокса
             box = self.bounding_boxes[self.selected_box_index]
-            x1, y1, x2, y2, angle, _ = box
+            x1, y1, x2, y2, angle, _sel, name = box if len(box) > 6 else (*box, None)
             dx = self.last_mouse_pos.x() - self.drag_start_pos.x()
             dy = self.last_mouse_pos.y() - self.drag_start_pos.y()
             
             if self.drag_type == 'move':
                 # Перемещение всего бокса (сохраняя размер и угол)
-                start_x1, start_y1, start_x2, start_y2, start_angle, _ = self.drag_start_box
+                start_x1, start_y1, start_x2, start_y2, start_angle, _, start_name = self.drag_start_box
                 width = start_x2 - start_x1
                 height = start_y2 - start_y1
                 new_x1 = start_x1 + dx
                 new_y1 = start_y1 + dy
                 new_x2 = new_x1 + width
                 new_y2 = new_y1 + height
-                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, start_name)
             elif self.drag_type == 'corner':
                 # Изменение размера через угол
                 corners = self.get_box_corners(self.drag_start_box)
@@ -1001,13 +1019,14 @@ class ImageDisplayWidget(QWidget):
                 new_x2 = max(new_corner_x, opposite_corner[0])
                 new_y2 = max(new_corner_y, opposite_corner[1])
                 
-                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
+                start_name = self.drag_start_box[6] if len(self.drag_start_box) > 6 else None
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, start_name)
             elif self.drag_type == 'edge':
                 # Изменение размера через край
                 edge = self.drag_corner_index
                 
                 # Работаем в системе координат бокса (до поворота)
-                orig_x1, orig_y1, orig_x2, orig_y2, orig_angle, _ = self.drag_start_box
+                orig_x1, orig_y1, orig_x2, orig_y2, orig_angle, _sel, orig_name = self.drag_start_box if len(self.drag_start_box) > 6 else (*self.drag_start_box, None)
                 center_x = (orig_x1 + orig_x2) / 2
                 center_y = (orig_y1 + orig_y2) / 2
                 width = abs(orig_x2 - orig_x1)
@@ -1067,7 +1086,8 @@ class ImageDisplayWidget(QWidget):
                     elif edge == 0:
                         new_y1 = new_y2 - 5
                 
-                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
+                start_name = self.drag_start_box[6] if len(self.drag_start_box) > 6 else None
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, start_name)
             
             self.update()
         elif self.drawing_box:
@@ -1085,12 +1105,13 @@ class ImageDisplayWidget(QWidget):
                 
                 # Проверяем, что бокс имеет ненулевой размер
                 if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
-                    # Добавляем новый бокс (начало, конец, угол=0, выбран)
-                    self.bounding_boxes.append((x1, y1, x2, y2, 0.0, True))
+                    # Добавляем новый бокс (начало, конец, угол=0, выбран, имя None)
+                    self.bounding_boxes.append((x1, y1, x2, y2, 0.0, True, None))
                     # Снимаем выделение с других боксов
                     for i in range(len(self.bounding_boxes) - 1):
                         box = self.bounding_boxes[i]
-                        self.bounding_boxes[i] = (box[0], box[1], box[2], box[3], box[4], False)
+                        name = box[6] if len(box) > 6 else None
+                        self.bounding_boxes[i] = (box[0], box[1], box[2], box[3], box[4], False, name)
                     self.selected_box_index = len(self.bounding_boxes) - 1
                 
                 self.drawing_box = False
@@ -1126,12 +1147,15 @@ class ImageMarkingWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window)
         self.setWindowTitle("Разметка изображения")
         self.setMinimumSize(800, 600)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         # Создаем layout
         layout = QVBoxLayout(self)
         
         # Создаем кастомный виджет для отображения изображения с разметкой
         self.image_widget = ImageDisplayWidget()
+        self.image_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.image_widget.setFocus()
         layout.addWidget(self.image_widget)
         
         # Отображаем изображение
@@ -1177,6 +1201,23 @@ class ImageMarkingWindow(QWidget):
             if layout:
                 layout.addWidget(error_label)
 
+    def rename_selected_bbox(self, parent_widget=None):
+        """Переименовать выбранный бокс через диалог."""
+        if self.selected_box_index is None or self.selected_box_index < 0 or self.selected_box_index >= len(self.bounding_boxes):
+            return
+        box = self.bounding_boxes[self.selected_box_index]
+        x1, y1, x2, y2, angle, selected = box[:6]
+        current_name = box[6] if len(box) > 6 else ""
+        text, ok = QInputDialog.getText(parent_widget or self,
+                                        "Имя бокса",
+                                        "Введите имя бокса",
+                                        text=current_name or "")
+        if not ok:
+            return
+        new_name = text.strip() or None
+        self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, angle, selected, new_name)
+        self.update()
+
     def resizeEvent(self, event):
         """Обработка изменения размера окна разметки."""
         if hasattr(self, 'image_widget') and hasattr(self, 'original_pixmap'):
@@ -1196,6 +1237,13 @@ class ImageMarkingWindow(QWidget):
         if hasattr(self, 'main_window_ref'):
             self.main_window_ref.marking_window = None
         event.accept()
+
+    def keyPressEvent(self, event):
+        """Enter/Return — переименование выбранного бокса."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.image_widget.rename_selected_bbox(self)
+            return
+        super().keyPressEvent(event)
 
 
 # Optional: Run standalone for testing
