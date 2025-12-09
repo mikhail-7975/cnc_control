@@ -924,11 +924,14 @@ class ImageDisplayWidget(QWidget):
             dy = self.last_mouse_pos.y() - self.drag_start_pos.y()
             
             if self.drag_type == 'move':
-                # Перемещение всего бокса
-                new_x1 = x1 + dx
-                new_y1 = y1 + dy
-                new_x2 = x2 + dx
-                new_y2 = y2 + dy
+                # Перемещение всего бокса (сохраняя размер и угол)
+                start_x1, start_y1, start_x2, start_y2, start_angle, _ = self.drag_start_box
+                width = start_x2 - start_x1
+                height = start_y2 - start_y1
+                new_x1 = start_x1 + dx
+                new_y1 = start_y1 + dy
+                new_x2 = new_x1 + width
+                new_y2 = new_y1 + height
                 self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True)
             elif self.drag_type == 'corner':
                 # Изменение размера через угол
