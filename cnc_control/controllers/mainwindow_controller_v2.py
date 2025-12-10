@@ -1091,6 +1091,9 @@ class ImageDisplayWidget(QWidget):
                         box = self.bounding_boxes[i]
                         self.bounding_boxes[i] = (box[0], box[1], box[2], box[3], box[4], False, box[6])
                     self.selected_box_index = len(self.bounding_boxes) - 1
+                    
+                    # Автоматически показываем диалог для ввода имени нового бокса
+                    self._show_name_dialog_for_selected_box()
                 
                 self.drawing_box = False
                 self.current_box_start = None
@@ -1115,26 +1118,31 @@ class ImageDisplayWidget(QWidget):
                 self.drag_start_pos = None
                 self.drag_start_box = None
     
+    def _show_name_dialog_for_selected_box(self):
+        """Показать диалог для ввода имени выбранного бокса."""
+        if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
+            box = self.bounding_boxes[self.selected_box_index]
+            x1, y1, x2, y2, angle, selected, current_name = box
+            
+            # Открываем диалог для ввода имени
+            text, ok = QInputDialog.getText(
+                self,
+                "Имя bounding box",
+                "Введите имя для bounding box:",
+                text=current_name if current_name else ""
+            )
+            
+            if ok and text:
+                # Обновляем имя бокса
+                self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, angle, selected, text)
+                self.update()
+    
     def keyPressEvent(self, event):
         """Обработка нажатия клавиш."""
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             # Если нажат Enter и есть выбранный бокс, открываем диалог для ввода имени
             if self.selected_box_index is not None:
-                box = self.bounding_boxes[self.selected_box_index]
-                x1, y1, x2, y2, angle, selected, current_name = box
-                
-                # Открываем диалог для ввода имени
-                text, ok = QInputDialog.getText(
-                    self,
-                    "Имя bounding box",
-                    "Введите имя для bounding box:",
-                    text=current_name if current_name else ""
-                )
-                
-                if ok and text:
-                    # Обновляем имя бокса
-                    self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, angle, selected, text)
-                    self.update()
+                self._show_name_dialog_for_selected_box()
         elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
             # Если нажат Delete/Backspace и есть выбранный бокс, удаляем его
             if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
