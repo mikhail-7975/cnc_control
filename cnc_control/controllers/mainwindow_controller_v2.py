@@ -9,13 +9,12 @@ MainWindow Controller V2
 import sys
 import cv2
 import time
-import csv
 import json
 from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QPushButton, QHBoxLayout
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
@@ -1165,24 +1164,13 @@ class ImageMarkingWindow(QWidget):
         # Создаем layout
         layout = QVBoxLayout(self)
         
-        # Создаем горизонтальный layout для кнопок
-        button_layout = QHBoxLayout()
-        
-        # Кнопка для сохранения отчета в CSV
-        self.save_report_button = QPushButton("Сохранить отчет в CSV")
-        self.save_report_button.clicked.connect(self.save_bboxes_to_csv)
-        button_layout.addWidget(self.save_report_button)
-        button_layout.addStretch()  # Добавляем растягивающийся элемент для выравнивания
-        
-        layout.addLayout(button_layout)
-        
         # Создаем кастомный виджет для отображения изображения с разметкой
         self.image_widget = ImageDisplayWidget()
         layout.addWidget(self.image_widget)
         
-        # Добавляем горячую клавишу Ctrl+S для сохранения
+        # Добавляем горячую клавишу Ctrl+S для сохранения в JSON
         self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
-        self.save_shortcut.activated.connect(self.save_bboxes_to_csv)
+        self.save_shortcut.activated.connect(self.save_bboxes)
         
         # Устанавливаем фокус на виджет изображения для получения событий клавиатуры
         self.image_widget.setFocus()
@@ -1329,63 +1317,6 @@ class ImageMarkingWindow(QWidget):
             
         except Exception as e:
             print(f"Ошибка при загрузке bboxes: {str(e)}")
-    
-    def save_bboxes_to_csv(self):
-        """Сохранить информацию о bounding boxes в CSV файл (один файл для всех bboxes)."""
-        try:
-            # Получаем путь к директории inspection_reports
-            # Файл находится в cnc_control/controllers/, поэтому нужно подняться на 2 уровня до корня проекта
-            project_root = Path(__file__).parent.parent.parent
-            reports_dir = project_root / "inspection_reports"
-            
-            # Создаем директорию, если её нет
-            reports_dir.mkdir(exist_ok=True)
-            
-            # Используем одно имя файла для всех bboxes
-            csv_filename = "bbox_report.csv"
-            csv_path = reports_dir / csv_filename
-            
-            # Получаем все bounding boxes из виджета
-            bboxes = self.image_widget.bounding_boxes
-            
-            if not bboxes:
-                QMessageBox.information(self, "Информация", "Нет bounding boxes для сохранения.")
-                return
-            
-            # Проверяем, существует ли файл
-            file_exists = csv_path.exists()
-            
-            # Записываем данные в CSV (append если файл существует, иначе создаем новый)
-            with open(csv_path, 'a' if file_exists else 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                
-                # Записываем заголовки только если файл новый
-                if not file_exists:
-                    writer.writerow(['Image Number', 'X1', 'Y1', 'X2', 'Y2', 'Bbox Name'])
-                
-                # Записываем данные о каждом bbox (сохраняем координаты как есть, без преобразований)
-                for box in bboxes:
-                    x1, y1, x2, y2, angle, selected, name = box
-                    writer.writerow([
-                        str(self.image_number),
-                        str(x1),
-                        str(y1),
-                        str(x2),
-                        str(y2),
-                        name if name else ""
-                    ])
-            
-            # Также сохраняем bboxes в JSON для восстановления при следующем открытии
-            self.save_bboxes()
-            
-            QMessageBox.information(
-                self,
-                "Успех",
-                f"Отчет сохранен в файл:\n{csv_path}\n\nСохранено bounding boxes: {len(bboxes)}"
-            )
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при сохранении отчета:\n{str(e)}")
     
     def closeEvent(self, event):
         """Обработка закрытия окна разметки."""
