@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QPushButton, QHBoxLayout
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
 import math
 # Try to import UI v2 - adjust class name if needed
 # Add project root to path for UI imports
@@ -1178,6 +1178,10 @@ class ImageMarkingWindow(QWidget):
         # Создаем кастомный виджет для отображения изображения с разметкой
         self.image_widget = ImageDisplayWidget()
         layout.addWidget(self.image_widget)
+        
+        # Добавляем горячую клавишу Ctrl+S для сохранения
+        self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.save_shortcut.activated.connect(self.save_bboxes_to_csv)
         
         # Устанавливаем фокус на виджет изображения для получения событий клавиатуры
         self.image_widget.setFocus()
