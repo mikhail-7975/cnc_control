@@ -10,6 +10,7 @@ import sys
 import cv2
 import time
 import csv
+import json
 from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
@@ -1188,6 +1189,9 @@ class ImageMarkingWindow(QWidget):
         
         # Отображаем изображение
         self.display_image(image)
+        
+        # Загружаем сохраненные bboxes для этого изображения
+        self.load_bboxes()
     
     def display_image(self, image):
         """Отобразить изображение в окне."""
@@ -1242,6 +1246,70 @@ class ImageMarkingWindow(QWidget):
             self.image_widget.set_image(scaled_pixmap)
         super().resizeEvent(event)
     
+    def get_bboxes_file_path(self):
+        """Получить путь к файлу для сохранения bboxes этого изображения."""
+        project_root = Path(__file__).parent.parent.parent
+        markup_dir = project_root / "markup_info"
+        markup_dir.mkdir(exist_ok=True)
+        return markup_dir / f"bboxes_image_{self.image_number}.json"
+    
+    def save_bboxes(self):
+        """Сохранить bboxes в JSON файл."""
+        try:
+            bboxes_file = self.get_bboxes_file_path()
+            bboxes = self.image_widget.bounding_boxes
+            
+            # Конвертируем bboxes в список словарей для JSON
+            bboxes_data = []
+            for box in bboxes:
+                x1, y1, x2, y2, angle, selected, name = box
+                bboxes_data.append({
+                    'x1': float(x1),
+                    'y1': float(y1),
+                    'x2': float(x2),
+                    'y2': float(y2),
+                    'angle': float(angle),
+                    'name': name if name else ""
+                })
+            
+            # Сохраняем в JSON
+            with open(bboxes_file, 'w', encoding='utf-8') as f:
+                json.dump(bboxes_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Ошибка при сохранении bboxes: {str(e)}")
+    
+    def load_bboxes(self):
+        """Загрузить bboxes из JSON файла."""
+        try:
+            bboxes_file = self.get_bboxes_file_path()
+            
+            if not bboxes_file.exists():
+                return  # Нет сохраненных bboxes
+            
+            # Загружаем из JSON
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                bboxes_data = json.load(f)
+            
+            # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
+            loaded_bboxes = []
+            for bbox_data in bboxes_data:
+                loaded_bboxes.append((
+                    bbox_data['x1'],
+                    bbox_data['y1'],
+                    bbox_data['x2'],
+                    bbox_data['y2'],
+                    bbox_data.get('angle', 0.0),
+                    False,  # selected = False по умолчанию
+                    bbox_data.get('name', '')
+                ))
+            
+            # Устанавливаем загруженные bboxes
+            self.image_widget.bounding_boxes = loaded_bboxes
+            self.image_widget.update()  # Обновляем отображение
+            
+        except Exception as e:
+            print(f"Ошибка при загрузке bboxes: {str(e)}")
+    
     def save_bboxes_to_csv(self):
         """Сохранить информацию о bounding boxes в CSV файл (один файл для всех bboxes)."""
         try:
@@ -1287,6 +1355,9 @@ class ImageMarkingWindow(QWidget):
                         name if name else ""
                     ])
             
+            # Также сохраняем bboxes в JSON для восстановления при следующем открытии
+            self.save_bboxes()
+            
             QMessageBox.information(
                 self,
                 "Успех",
@@ -1298,6 +1369,9 @@ class ImageMarkingWindow(QWidget):
     
     def closeEvent(self, event):
         """Обработка закрытия окна разметки."""
+        # Сохраняем bboxes перед закрытием
+        self.save_bboxes()
+        
         # Очищаем ссылку в главном окне, если она существует
         if hasattr(self, 'main_window_ref'):
             self.main_window_ref.marking_window = None
