@@ -1496,6 +1496,46 @@ class ImageMarkingWindow(QWidget):
     
     def closeEvent(self, event):
         """Обработка закрытия окна разметки."""
+        # Проверяем наличие неназванных bboxes
+        bboxes = self.image_widget.bounding_boxes
+        unnamed_bboxes = []
+        for i, box in enumerate(bboxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            if not name or name.strip() == "":
+                unnamed_bboxes.append(i + 1)  # +1 для отображения (начинаем с 1, а не 0)
+        
+        # Если есть неназванные bboxes, показываем предупреждение
+        if unnamed_bboxes:
+            unnamed_count = len(unnamed_bboxes)
+            if unnamed_count == 1:
+                message = f"Есть 1 неназванный bounding box (№{unnamed_bboxes[0]}).\n\nВы хотите вернуться и задать имя или продолжить закрытие окна?"
+            else:
+                bbox_numbers = ", ".join([f"№{num}" for num in unnamed_bboxes[:5]])  # Показываем первые 5
+                if unnamed_count > 5:
+                    bbox_numbers += f" и еще {unnamed_count - 5}"
+                message = f"Есть {unnamed_count} неназванных bounding boxes ({bbox_numbers}).\n\nВы хотите вернуться и задать имена или продолжить закрытие окна?"
+            
+            # Создаем диалог с кнопками "Вернуться" и "Продолжить"
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Неназванные bounding boxes")
+            msg_box.setText(message)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            
+            # Добавляем кнопки
+            go_back_button = msg_box.addButton("Вернуться", QMessageBox.ButtonRole.RejectRole)
+            continue_button = msg_box.addButton("Продолжить", QMessageBox.ButtonRole.AcceptRole)
+            
+            # Устанавливаем кнопку по умолчанию
+            msg_box.setDefaultButton(go_back_button)
+            
+            # Показываем диалог
+            msg_box.exec()
+            
+            # Если пользователь выбрал "Вернуться", отменяем закрытие
+            if msg_box.clickedButton() == go_back_button:
+                event.ignore()
+                return
+        
         # Сохраняем bboxes перед закрытием
         self.save_bboxes()
         
