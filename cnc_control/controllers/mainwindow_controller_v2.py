@@ -1161,6 +1161,15 @@ class ImageMarkingWindow(QWidget):
         # Сохраняем номер/имя изображения
         self.image_number = image_number if image_number is not None else "unknown"
         
+        # Сохраняем оригинальное изображение (numpy array) для масштабирования
+        self.original_cv_image = image
+        
+        # Фактор масштабирования (1.0 = 100%)
+        self.zoom_scale = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 10.0
+        self.zoom_step = 0.1
+        
         # Создаем layout
         layout = QVBoxLayout(self)
         
@@ -1172,6 +1181,14 @@ class ImageMarkingWindow(QWidget):
         self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         self.save_shortcut.activated.connect(self.save_bboxes)
         
+        # Добавляем горячие клавиши для масштабирования
+        self.zoom_in_shortcut = QShortcut(QKeySequence("Ctrl+="), self)  # Ctrl+= для увеличения
+        self.zoom_in_shortcut.activated.connect(self.zoom_in)
+        self.zoom_in_plus_shortcut = QShortcut(QKeySequence("Ctrl++"), self)  # Ctrl++ для увеличения
+        self.zoom_in_plus_shortcut.activated.connect(self.zoom_in)
+        self.zoom_out_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)  # Ctrl+- для уменьшения
+        self.zoom_out_shortcut.activated.connect(self.zoom_out)
+        
         # Устанавливаем фокус на виджет изображения для получения событий клавиатуры
         self.image_widget.setFocus()
         
@@ -1181,9 +1198,15 @@ class ImageMarkingWindow(QWidget):
         # Загружаем сохраненные bboxes для этого изображения
         self.load_bboxes()
     
-    def display_image(self, image):
-        """Отобразить изображение в окне."""
+    def display_image(self, image=None):
+        """Отобразить изображение в окне с учетом текущего масштаба."""
         try:
+            # Используем сохраненное изображение, если не передано новое
+            if image is None:
+                image = self.original_cv_image
+            else:
+                self.original_cv_image = image
+            
             # Конвертируем BGR в RGB для Qt
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
@@ -1194,44 +1217,68 @@ class ImageMarkingWindow(QWidget):
             # Сохраняем оригинальное изображение для возможного использования
             self.original_pixmap = pixmap
             
-            # Устанавливаем размер окна под изображение (с ограничениями)
-            max_width = 1920
-            max_height = 1080
-            img_width = w
-            img_height = h
+            # Применяем масштабирование
+            scaled_width = int(w * self.zoom_scale)
+            scaled_height = int(h * self.zoom_scale)
             
-            # Масштабируем если изображение слишком большое
-            if img_width > max_width or img_height > max_height:
-                scale = min(max_width / img_width, max_height / img_height)
-                img_width = int(img_width * scale)
-                img_height = int(img_height * scale)
-                # Масштабируем pixmap для отображения
-                pixmap = pixmap.scaled(
-                    img_width, img_height,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
+            # Масштабируем pixmap
+            scaled_pixmap = pixmap.scaled(
+                scaled_width, scaled_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
             
             # Устанавливаем изображение в виджет
-            self.image_widget.set_image(pixmap)
+            self.image_widget.set_image(scaled_pixmap)
             
         except Exception as e:
             error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
             layout = self.layout()
             if layout:
                 layout.addWidget(error_label)
+    
+    def zoom_in(self):
+        """Увеличить масштаб изображения."""
+        old_scale = self.zoom_scale
+        self.zoom_scale = min(self.zoom_scale + self.zoom_step, self.max_zoom)
+        if old_scale != self.zoom_scale:
+            self._update_bboxes_scale(old_scale, self.zoom_scale)
+            self.display_image()
+    
+    def zoom_out(self):
+        """Уменьшить масштаб изображения."""
+        old_scale = self.zoom_scale
+        self.zoom_scale = max(self.zoom_scale - self.zoom_step, self.min_zoom)
+        if old_scale != self.zoom_scale:
+            self._update_bboxes_scale(old_scale, self.zoom_scale)
+            self.display_image()
+    
+    def _update_bboxes_scale(self, old_scale, new_scale):
+        """Обновить координаты bboxes при изменении масштаба."""
+        if old_scale == 0 or new_scale == 0:
+            return
+        scale_factor = new_scale / old_scale
+        bboxes = self.image_widget.bounding_boxes
+        updated_bboxes = []
+        for box in bboxes:
+            x1, y1, x2, y2, angle, selected, name = box
+            updated_bboxes.append((
+                x1 * scale_factor,
+                y1 * scale_factor,
+                x2 * scale_factor,
+                y2 * scale_factor,
+                angle,
+                selected,
+                name
+            ))
+        self.image_widget.bounding_boxes = updated_bboxes
+        self.image_widget.update()
 
     def resizeEvent(self, event):
         """Обработка изменения размера окна разметки."""
-        if hasattr(self, 'image_widget') and hasattr(self, 'original_pixmap'):
-            # Масштабируем изображение при изменении размера окна
-            scaled_pixmap = self.original_pixmap.scaled(
-                self.width() - 50,
-                self.height() - 50,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            self.image_widget.set_image(scaled_pixmap)
+        # При изменении размера окна перерисовываем изображение с текущим масштабом
+        if hasattr(self, 'original_cv_image'):
+            self.display_image()
         super().resizeEvent(event)
     
     def get_bboxes_file_path(self):
@@ -1257,14 +1304,20 @@ class ImageMarkingWindow(QWidget):
                     all_bboxes_data = {}
             
             # Конвертируем текущие bboxes в список словарей для JSON
+            # Важно: конвертируем координаты из масштабированного пространства в оригинальное
             bboxes_data = []
             for box in bboxes:
                 x1, y1, x2, y2, angle, selected, name = box
+                # Конвертируем координаты обратно в оригинальный размер изображения
+                orig_x1 = x1 / self.zoom_scale
+                orig_y1 = y1 / self.zoom_scale
+                orig_x2 = x2 / self.zoom_scale
+                orig_y2 = y2 / self.zoom_scale
                 bboxes_data.append({
-                    'x1': float(x1),
-                    'y1': float(y1),
-                    'x2': float(x2),
-                    'y2': float(y2),
+                    'x1': float(orig_x1),
+                    'y1': float(orig_y1),
+                    'x2': float(orig_x2),
+                    'y2': float(orig_y2),
                     'angle': float(angle),
                     'name': name if name else ""
                 })
@@ -1299,13 +1352,19 @@ class ImageMarkingWindow(QWidget):
             bboxes_data = all_bboxes_data[image_key]
             
             # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
+            # Важно: конвертируем координаты из оригинального пространства в текущее масштабированное
             loaded_bboxes = []
             for bbox_data in bboxes_data:
+                # Конвертируем координаты из оригинального размера в текущий масштаб
+                scaled_x1 = bbox_data['x1'] * self.zoom_scale
+                scaled_y1 = bbox_data['y1'] * self.zoom_scale
+                scaled_x2 = bbox_data['x2'] * self.zoom_scale
+                scaled_y2 = bbox_data['y2'] * self.zoom_scale
                 loaded_bboxes.append((
-                    bbox_data['x1'],
-                    bbox_data['y1'],
-                    bbox_data['x2'],
-                    bbox_data['y2'],
+                    scaled_x1,
+                    scaled_y1,
+                    scaled_x2,
+                    scaled_y2,
                     bbox_data.get('angle', 0.0),
                     False,  # selected = False по умолчанию
                     bbox_data.get('name', '')
