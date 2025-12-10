@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
+    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
@@ -887,6 +887,10 @@ class ImageDisplayWidget(QWidget):
                         x1, y1, x2, y2, angle, _, name = box
                         self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box, name)
                     
+                    # Обновляем список bboxes в окне разметки
+                    if hasattr(self, 'marking_window') and self.marking_window:
+                        self.marking_window.update_bbox_list()
+                    
                     # Начинаем перетаскивание
                     self.dragging_box = True
                     self.drag_type = interaction_type
@@ -1092,6 +1096,10 @@ class ImageDisplayWidget(QWidget):
                         self.bounding_boxes[i] = (box[0], box[1], box[2], box[3], box[4], False, box[6])
                     self.selected_box_index = len(self.bounding_boxes) - 1
                     
+                    # Обновляем список bboxes в окне разметки
+                    if hasattr(self, 'marking_window') and self.marking_window:
+                        self.marking_window.update_bbox_list()
+                    
                     # Автоматически показываем диалог для ввода имени нового бокса
                     self._show_name_dialog_for_selected_box()
                 
@@ -1136,6 +1144,9 @@ class ImageDisplayWidget(QWidget):
                 # Обновляем имя бокса
                 self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, angle, selected, text)
                 self.update()
+                # Обновляем список bboxes в окне разметки
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_bbox_list()
     
     def keyPressEvent(self, event):
         """Обработка нажатия клавиш."""
@@ -1152,6 +1163,9 @@ class ImageDisplayWidget(QWidget):
                 self.selected_box_index = None
                 # Обновляем отображение
                 self.update()
+                # Обновляем список bboxes в окне разметки
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_bbox_list()
         else:
             super().keyPressEvent(event)
 
@@ -1179,12 +1193,31 @@ class ImageMarkingWindow(QWidget):
         self.zoom_step = 0.1
         self.initial_zoom_calculated = False
         
-        # Создаем layout
-        layout = QVBoxLayout(self)
+        # Создаем горизонтальный layout для размещения изображения и списка bboxes
+        main_layout = QHBoxLayout(self)
         
         # Создаем кастомный виджет для отображения изображения с разметкой
         self.image_widget = ImageDisplayWidget()
-        layout.addWidget(self.image_widget)
+        # Сохраняем ссылку на окно в виджете для обновления списка
+        self.image_widget.marking_window = self
+        main_layout.addWidget(self.image_widget, stretch=1)
+        
+        # Создаем список для отображения имен bboxes
+        bbox_list_layout = QVBoxLayout()
+        bbox_list_label = QLabel("Bounding Boxes:")
+        bbox_list_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        bbox_list_layout.addWidget(bbox_list_label)
+        
+        self.bbox_list_widget = QListWidget()
+        self.bbox_list_widget.setMaximumWidth(250)
+        self.bbox_list_widget.setMinimumWidth(200)
+        self.bbox_list_widget.itemClicked.connect(self.on_bbox_list_item_clicked)
+        bbox_list_layout.addWidget(self.bbox_list_widget)
+        
+        # Создаем контейнер для списка
+        bbox_list_container = QWidget()
+        bbox_list_container.setLayout(bbox_list_layout)
+        main_layout.addWidget(bbox_list_container)
         
         # Добавляем горячую клавишу Ctrl+S для сохранения в JSON
         self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
@@ -1206,6 +1239,9 @@ class ImageMarkingWindow(QWidget):
         
         # Загружаем сохраненные bboxes для этого изображения
         self.load_bboxes()
+        
+        # Обновляем список bboxes
+        self.update_bbox_list()
     
     def display_image(self, image=None):
         """Отобразить изображение в окне с учетом текущего масштаба."""
@@ -1417,8 +1453,46 @@ class ImageMarkingWindow(QWidget):
             self.image_widget.bounding_boxes = loaded_bboxes
             self.image_widget.update()  # Обновляем отображение
             
+            # Обновляем список bboxes
+            self.update_bbox_list()
+            
         except Exception as e:
             print(f"Ошибка при загрузке bboxes: {str(e)}")
+    
+    def update_bbox_list(self):
+        """Обновить список имен bboxes в боковой панели."""
+        if not hasattr(self, 'bbox_list_widget'):
+            return
+        
+        self.bbox_list_widget.clear()
+        bboxes = self.image_widget.bounding_boxes
+        
+        for i, box in enumerate(bboxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            # Показываем имя или "Unnamed" если имя пустое
+            display_name = name if name else f"Unnamed #{i+1}"
+            self.bbox_list_widget.addItem(display_name)
+            
+            # Выделяем текущий выбранный bbox
+            if selected and i == self.image_widget.selected_box_index:
+                item = self.bbox_list_widget.item(i)
+                if item:
+                    item.setSelected(True)
+                    self.bbox_list_widget.setCurrentItem(item)
+    
+    def on_bbox_list_item_clicked(self, item):
+        """Обработка клика по элементу списка bboxes - выделить соответствующий bbox."""
+        row = self.bbox_list_widget.row(item)
+        if 0 <= row < len(self.image_widget.bounding_boxes):
+            # Выделяем соответствующий bbox
+            self.image_widget.selected_box_index = row
+            # Обновляем флаги выбранности для всех bboxes
+            for i, box in enumerate(self.image_widget.bounding_boxes):
+                x1, y1, x2, y2, angle, selected, name = box
+                self.image_widget.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == row, name)
+            self.image_widget.update()
+            # Обновляем список для синхронизации выделения
+            self.update_bbox_list()
     
     def closeEvent(self, event):
         """Обработка закрытия окна разметки."""
