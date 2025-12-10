@@ -1473,10 +1473,16 @@ class ImageMarkingWindow(QWidget):
             display_name = name if name else f"Unnamed #{i+1}"
             self.bbox_list_widget.addItem(display_name)
             
-            # Выделяем текущий выбранный bbox
-            if selected and i == self.image_widget.selected_box_index:
-                item = self.bbox_list_widget.item(i)
-                if item:
+            # Получаем элемент для настройки
+            item = self.bbox_list_widget.item(i)
+            if item:
+                # Выделяем неназванные элементы светло-красным цветом
+                if not name or name.strip() == "":
+                    light_red = QColor(255, 200, 200)  # Светло-красный цвет
+                    item.setBackground(light_red)
+                
+                # Выделяем текущий выбранный bbox
+                if selected and i == self.image_widget.selected_box_index:
                     item.setSelected(True)
                     self.bbox_list_widget.setCurrentItem(item)
     
