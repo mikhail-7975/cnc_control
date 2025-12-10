@@ -1239,7 +1239,7 @@ class ImageMarkingWindow(QWidget):
         super().resizeEvent(event)
     
     def save_bboxes_to_csv(self):
-        """Сохранить информацию о bounding boxes в CSV файл."""
+        """Сохранить информацию о bounding boxes в CSV файл (один файл для всех bboxes)."""
         try:
             # Получаем путь к директории inspection_reports
             # Файл находится в cnc_control/controllers/, поэтому нужно подняться на 2 уровня до корня проекта
@@ -1249,9 +1249,8 @@ class ImageMarkingWindow(QWidget):
             # Создаем директорию, если её нет
             reports_dir.mkdir(exist_ok=True)
             
-            # Генерируем имя файла с временной меткой
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            csv_filename = f"bbox_report_{timestamp}.csv"
+            # Используем одно имя файла для всех bboxes
+            csv_filename = "bbox_report.csv"
             csv_path = reports_dir / csv_filename
             
             # Получаем все bounding boxes из виджета
@@ -1261,12 +1260,16 @@ class ImageMarkingWindow(QWidget):
                 QMessageBox.information(self, "Информация", "Нет bounding boxes для сохранения.")
                 return
             
-            # Записываем данные в CSV
-            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+            # Проверяем, существует ли файл
+            file_exists = csv_path.exists()
+            
+            # Записываем данные в CSV (append если файл существует, иначе создаем новый)
+            with open(csv_path, 'a' if file_exists else 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 
-                # Записываем заголовки
-                writer.writerow(['Image Number', 'X1', 'Y1', 'X2', 'Y2', 'Bbox Name'])
+                # Записываем заголовки только если файл новый
+                if not file_exists:
+                    writer.writerow(['Image Number', 'X1', 'Y1', 'X2', 'Y2', 'Bbox Name'])
                 
                 # Записываем данные о каждом bbox (сохраняем координаты как есть, без преобразований)
                 for box in bboxes:
