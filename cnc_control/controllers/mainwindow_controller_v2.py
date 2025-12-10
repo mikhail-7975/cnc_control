@@ -960,9 +960,9 @@ class ImageDisplayWidget(QWidget):
                     # Если угол больше 45 градусов, край более вертикальный
                     # Если угол меньше 45 градусов, край более горизонтальный
                     if edge_angle > 45:
-                        self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
-                    else:
                         self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+                    else:
+                        self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
                     cursor_set = True
                     break
                 elif interaction_type == 'rotate':
