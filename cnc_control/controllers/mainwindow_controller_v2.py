@@ -1160,6 +1160,15 @@ class ImageDisplayWidget(QWidget):
                     # Обновляем имя бокса
                     self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, angle, selected, text)
                     self.update()
+        elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+            # Если нажат Delete/Backspace и есть выбранный бокс, удаляем его
+            if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
+                # Удаляем выбранный бокс
+                del self.bounding_boxes[self.selected_box_index]
+                # Сбрасываем выделение
+                self.selected_box_index = None
+                # Обновляем отображение
+                self.update()
         else:
             super().keyPressEvent(event)
 
