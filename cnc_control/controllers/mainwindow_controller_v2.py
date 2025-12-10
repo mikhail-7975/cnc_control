@@ -702,11 +702,6 @@ class ImageDisplayWidget(QWidget):
         x1, y1, x2, y2, angle, _, _ = box
         corners = self.get_box_corners(box)
         
-        # Ручка вращения
-        handle_point = self.get_rotation_handle(box)
-        if (pos - handle_point).manhattanLength() < 16:
-            return 'rotate', None
-        
         # Проверяем попадание в углы (радиус 10 пикселей)
         corner_radius = 10
         for i, (cx, cy) in enumerate(corners):
@@ -804,13 +799,6 @@ class ImageDisplayWidget(QWidget):
             for corner in corners:
                 painter.fillRect(corner, pen.color())
             
-            # Ручка вращения
-            handle_point = self.get_rotation_handle(box)
-            handle_rect = QRectF(handle_point.x() - corner_size / 2,
-                                  handle_point.y() - corner_size / 2,
-                                  corner_size, corner_size)
-            painter.fillRect(handle_rect, QColor(0, 200, 255))
-            
             painter.restore()
             
             # Рисуем имя бокса над верхним левым углом
@@ -895,25 +883,12 @@ class ImageDisplayWidget(QWidget):
                         x1, y1, x2, y2, angle, _, name = box
                         self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box, name)
                     
-                    if interaction_type == 'rotate':
-                        # Начинаем вращение через ручку
-                        box = self.bounding_boxes[clicked_box]
-                        x1, y1, x2, y2, angle, _, _ = box
-                        center_x = (x1 + x2) / 2
-                        center_y = (y1 + y2) / 2
-                        dx = pos.x() - center_x
-                        dy = pos.y() - center_y
-                        pointer_angle = math.degrees(math.atan2(dy, dx))
-                        self.rotation_base_angle = angle
-                        self.rotation_start_pointer_angle = pointer_angle
-                        self.rotation_mode = True
-                    else:
-                        # Начинаем перетаскивание
-                        self.dragging_box = True
-                        self.drag_type = interaction_type
-                        self.drag_corner_index = interaction_index
-                        self.drag_start_pos = pos
-                        self.drag_start_box = self.bounding_boxes[clicked_box]
+                    # Начинаем перетаскивание
+                    self.dragging_box = True
+                    self.drag_type = interaction_type
+                    self.drag_corner_index = interaction_index
+                    self.drag_start_pos = pos
+                    self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
                     # Начинаем создание нового бокса
@@ -963,10 +938,6 @@ class ImageDisplayWidget(QWidget):
                         self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
                     else:
                         self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
-                    cursor_set = True
-                    break
-                elif interaction_type == 'rotate':
-                    self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
                     cursor_set = True
                     break
                 elif interaction_type == 'move':
