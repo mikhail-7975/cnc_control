@@ -1164,11 +1164,12 @@ class ImageMarkingWindow(QWidget):
         # Сохраняем оригинальное изображение (numpy array) для масштабирования
         self.original_cv_image = image
         
-        # Фактор масштабирования (1.0 = 100%)
+        # Фактор масштабирования (будет рассчитан для подгонки под окно)
         self.zoom_scale = 1.0
         self.min_zoom = 0.1
         self.max_zoom = 10.0
         self.zoom_step = 0.1
+        self.initial_zoom_calculated = False
         
         # Создаем layout
         layout = QVBoxLayout(self)
@@ -1192,7 +1193,7 @@ class ImageMarkingWindow(QWidget):
         # Устанавливаем фокус на виджет изображения для получения событий клавиатуры
         self.image_widget.setFocus()
         
-        # Отображаем изображение
+        # Отображаем изображение (с начальным масштабом для подгонки под окно)
         self.display_image(image)
         
         # Загружаем сохраненные bboxes для этого изображения
@@ -1216,6 +1217,27 @@ class ImageMarkingWindow(QWidget):
             
             # Сохраняем оригинальное изображение для возможного использования
             self.original_pixmap = pixmap
+            
+            # Рассчитываем начальный масштаб для подгонки изображения под окно (только при первом отображении)
+            if not self.initial_zoom_calculated:
+                # Получаем размер виджета изображения
+                widget_width = self.image_widget.width()
+                widget_height = self.image_widget.height()
+                
+                # Если виджет еще не отображен, используем размер окна
+                if widget_width <= 0 or widget_height <= 0:
+                    widget_width = self.width() - 20
+                    widget_height = self.height() - 20
+                
+                # Рассчитываем масштаб для подгонки изображения под размер виджета
+                if widget_width > 0 and widget_height > 0 and w > 0 and h > 0:
+                    scale_x = widget_width / w
+                    scale_y = widget_height / h
+                    # Используем меньший масштаб, чтобы изображение полностью поместилось
+                    self.zoom_scale = min(scale_x, scale_y) * 0.95  # 0.95 для небольшого отступа
+                    # Ограничиваем начальный масштаб разумными пределами
+                    self.zoom_scale = max(self.min_zoom, min(self.zoom_scale, self.max_zoom))
+                    self.initial_zoom_calculated = True
             
             # Применяем масштабирование
             scaled_width = int(w * self.zoom_scale)
@@ -1274,11 +1296,24 @@ class ImageMarkingWindow(QWidget):
         self.image_widget.bounding_boxes = updated_bboxes
         self.image_widget.update()
 
+    def showEvent(self, event):
+        """Обработка показа окна - пересчитываем начальный масштаб если еще не был рассчитан."""
+        super().showEvent(event)
+        if hasattr(self, 'original_cv_image') and not self.initial_zoom_calculated:
+            # Пересчитываем начальный масштаб после того, как окно показано
+            self.initial_zoom_calculated = False
+            self.display_image()
+    
     def resizeEvent(self, event):
         """Обработка изменения размера окна разметки."""
         # При изменении размера окна перерисовываем изображение с текущим масштабом
+        # (не пересчитываем начальный масштаб, чтобы сохранить пользовательский zoom)
         if hasattr(self, 'original_cv_image'):
+            # Временно отключаем пересчет начального масштаба
+            was_calculated = self.initial_zoom_calculated
+            self.initial_zoom_calculated = True
             self.display_image()
+            self.initial_zoom_calculated = was_calculated
         super().resizeEvent(event)
     
     def get_bboxes_file_path(self):
