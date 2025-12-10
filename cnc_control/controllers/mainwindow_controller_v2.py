@@ -1247,19 +1247,28 @@ class ImageMarkingWindow(QWidget):
         super().resizeEvent(event)
     
     def get_bboxes_file_path(self):
-        """Получить путь к файлу для сохранения bboxes этого изображения."""
+        """Получить путь к единому файлу для сохранения всех bboxes."""
         project_root = Path(__file__).parent.parent.parent
         markup_dir = project_root / "markup_info"
         markup_dir.mkdir(exist_ok=True)
-        return markup_dir / f"bboxes_image_{self.image_number}.json"
+        return markup_dir / "bboxes.json"
     
     def save_bboxes(self):
-        """Сохранить bboxes в JSON файл."""
+        """Сохранить bboxes в единый JSON файл (для всех изображений)."""
         try:
             bboxes_file = self.get_bboxes_file_path()
             bboxes = self.image_widget.bounding_boxes
             
-            # Конвертируем bboxes в список словарей для JSON
+            # Загружаем существующие данные, если файл есть
+            all_bboxes_data = {}
+            if bboxes_file.exists():
+                try:
+                    with open(bboxes_file, 'r', encoding='utf-8') as f:
+                        all_bboxes_data = json.load(f)
+                except:
+                    all_bboxes_data = {}
+            
+            # Конвертируем текущие bboxes в список словарей для JSON
             bboxes_data = []
             for box in bboxes:
                 x1, y1, x2, y2, angle, selected, name = box
@@ -1272,14 +1281,18 @@ class ImageMarkingWindow(QWidget):
                     'name': name if name else ""
                 })
             
-            # Сохраняем в JSON
+            # Обновляем данные для текущего изображения
+            image_key = str(self.image_number)
+            all_bboxes_data[image_key] = bboxes_data
+            
+            # Сохраняем все данные обратно в JSON
             with open(bboxes_file, 'w', encoding='utf-8') as f:
-                json.dump(bboxes_data, f, indent=2, ensure_ascii=False)
+                json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Ошибка при сохранении bboxes: {str(e)}")
     
     def load_bboxes(self):
-        """Загрузить bboxes из JSON файла."""
+        """Загрузить bboxes из единого JSON файла для текущего изображения."""
         try:
             bboxes_file = self.get_bboxes_file_path()
             
@@ -1288,7 +1301,14 @@ class ImageMarkingWindow(QWidget):
             
             # Загружаем из JSON
             with open(bboxes_file, 'r', encoding='utf-8') as f:
-                bboxes_data = json.load(f)
+                all_bboxes_data = json.load(f)
+            
+            # Извлекаем bboxes для текущего изображения
+            image_key = str(self.image_number)
+            if image_key not in all_bboxes_data:
+                return  # Нет bboxes для этого изображения
+            
+            bboxes_data = all_bboxes_data[image_key]
             
             # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
             loaded_bboxes = []
