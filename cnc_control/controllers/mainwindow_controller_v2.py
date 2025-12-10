@@ -9,16 +9,17 @@ MainWindow Controller V2
 import sys
 import cv2
 import time
+import csv
+from pathlib import Path
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QPushButton, QHBoxLayout
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont
 import math
 # Try to import UI v2 - adjust class name if needed
-import sys
-from pathlib import Path
 # Add project root to path for UI imports
 # project_root = Path(__file__).parent.parent.parent
 # if str(project_root) not in sys.path:
@@ -446,8 +447,11 @@ class MainWindowControllerV2(QMainWindow):
                 self.marking_window.activateWindow()
                 return
             
+            # Получаем номер изображения (индекс + 1)
+            image_number = self.current_etalon_index + 1
+            
             # Создаем и показываем новое окно как отдельное окно (не дочернее)
-            self.marking_window = ImageMarkingWindow(current_image, parent=None)
+            self.marking_window = ImageMarkingWindow(current_image, image_number=image_number, parent=None)
             # Сохраняем ссылку на главное окно в окне разметки для очистки при закрытии
             self.marking_window.main_window_ref = self
             
@@ -1147,15 +1151,29 @@ class ImageDisplayWidget(QWidget):
 class ImageMarkingWindow(QWidget):
     """Окно для разметки изображения."""
     
-    def __init__(self, image, parent=None):
+    def __init__(self, image, image_number=None, parent=None):
         super().__init__(parent)
         # Устанавливаем флаги окна для создания отдельного окна
         self.setWindowFlags(Qt.WindowType.Window)
         self.setWindowTitle("Разметка изображения")
         self.setMinimumSize(800, 600)
         
+        # Сохраняем номер/имя изображения
+        self.image_number = image_number if image_number is not None else "unknown"
+        
         # Создаем layout
         layout = QVBoxLayout(self)
+        
+        # Создаем горизонтальный layout для кнопок
+        button_layout = QHBoxLayout()
+        
+        # Кнопка для сохранения отчета в CSV
+        self.save_report_button = QPushButton("Сохранить отчет в CSV")
+        self.save_report_button.clicked.connect(self.save_bboxes_to_csv)
+        button_layout.addWidget(self.save_report_button)
+        button_layout.addStretch()  # Добавляем растягивающийся элемент для выравнивания
+        
+        layout.addLayout(button_layout)
         
         # Создаем кастомный виджет для отображения изображения с разметкой
         self.image_widget = ImageDisplayWidget()
@@ -1219,6 +1237,57 @@ class ImageMarkingWindow(QWidget):
             )
             self.image_widget.set_image(scaled_pixmap)
         super().resizeEvent(event)
+    
+    def save_bboxes_to_csv(self):
+        """Сохранить информацию о bounding boxes в CSV файл."""
+        try:
+            # Получаем путь к директории inspection_reports
+            # Файл находится в cnc_control/controllers/, поэтому нужно подняться на 2 уровня до корня проекта
+            project_root = Path(__file__).parent.parent.parent
+            reports_dir = project_root / "inspection_reports"
+            
+            # Создаем директорию, если её нет
+            reports_dir.mkdir(exist_ok=True)
+            
+            # Генерируем имя файла с временной меткой
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_filename = f"bbox_report_{timestamp}.csv"
+            csv_path = reports_dir / csv_filename
+            
+            # Получаем все bounding boxes из виджета
+            bboxes = self.image_widget.bounding_boxes
+            
+            if not bboxes:
+                QMessageBox.information(self, "Информация", "Нет bounding boxes для сохранения.")
+                return
+            
+            # Записываем данные в CSV
+            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # Записываем заголовки
+                writer.writerow(['Image Number', 'X1', 'Y1', 'X2', 'Y2', 'Bbox Name'])
+                
+                # Записываем данные о каждом bbox (сохраняем координаты как есть, без преобразований)
+                for box in bboxes:
+                    x1, y1, x2, y2, angle, selected, name = box
+                    writer.writerow([
+                        str(self.image_number),
+                        str(x1),
+                        str(y1),
+                        str(x2),
+                        str(y2),
+                        name if name else ""
+                    ])
+            
+            QMessageBox.information(
+                self,
+                "Успех",
+                f"Отчет сохранен в файл:\n{csv_path}\n\nСохранено bounding boxes: {len(bboxes)}"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при сохранении отчета:\n{str(e)}")
     
     def closeEvent(self, event):
         """Обработка закрытия окна разметки."""
