@@ -24,7 +24,7 @@
     <item row="0" column="0">
      <widget class="QTabWidget" name="tabWidget">
       <property name="currentIndex">
-       <number>1</number>
+       <number>2</number>
       </property>
       <widget class="QWidget" name="moving_settings_tab">
        <attribute name="title">
@@ -609,8 +609,71 @@
         <item>
          <widget class="QGroupBox" name="component_schema_groupbox">
           <property name="title">
-           <string>Схема расстановки</string>
+           <string>Инспекция</string>
           </property>
+          <layout class="QVBoxLayout" name="verticalLayout_10">
+           <item>
+            <widget class="QWidget" name="control_inspection_widget" native="true">
+             <layout class="QHBoxLayout" name="horizontalLayout_11">
+              <item>
+               <widget class="QPushButton" name="take_control_photo_pushButton">
+                <property name="text">
+                 <string>Сделать фото</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="save_control_photo_pushButton">
+                <property name="text">
+                 <string>Сохранить</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="load_control_photo_pushButton">
+                <property name="text">
+                 <string>Загрузить</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="run_inspection_pushButton">
+                <property name="text">
+                 <string>Запустить инспекцию</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QTabWidget" name="results_visualization_tabWidget">
+             <property name="currentIndex">
+              <number>1</number>
+             </property>
+             <widget class="QWidget" name="schema_tab">
+              <attribute name="title">
+               <string>Схема расстановки</string>
+              </attribute>
+              <layout class="QVBoxLayout" name="verticalLayout_12">
+               <item>
+                <widget class="QWidget" name="shema_display_widget" native="true"/>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="photo_tab">
+              <attribute name="title">
+               <string>Фотографии</string>
+              </attribute>
+              <layout class="QVBoxLayout" name="verticalLayout_11">
+               <item>
+                <widget class="QWidget" name="photo_display_widget" native="true"/>
+               </item>
+              </layout>
+             </widget>
+            </widget>
+           </item>
+          </layout>
          </widget>
         </item>
         <item>
