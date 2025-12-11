@@ -76,6 +76,9 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_image_names = []  # Список имен файлов изображений
         self.current_etalon_index = -1  # Индекс текущего изображения (-1 если нет изображений)
         
+        # Control images data
+        self.images_data = []  # [(row, col, file_path, image), ...] - данные контрольных изображений
+        
         # Reference to marking window to prevent garbage collection
         self.marking_window = None
         
@@ -516,7 +519,7 @@ class MainWindowControllerV2(QMainWindow):
             
             # Парсим имена файлов для извлечения координат
             # Формат: photo_X_Y.png, где X - столбец (горизонталь), Y - строка (вертикаль)
-            images_data = []  # [(row, col, file_path, image), ...]
+            self.images_data = []  # [(row, col, file_path, image), ...]
             
             for file_path in image_files:
                 # Извлекаем имя файла без расширения
@@ -532,21 +535,21 @@ class MainWindowControllerV2(QMainWindow):
                     # Загружаем изображение
                     image = cv2.imread(str(file_path))
                     if image is not None:
-                        images_data.append((row, col, file_path, image))
+                        self.images_data.append((row, col, file_path, image))
                 else:
                     # Если паттерн не найден, пропускаем файл
                     print(f"Предупреждение: не удалось определить координаты для файла {file_path.name}")
             
-            if not images_data:
+            if not self.images_data:
                 self.show_error("Не удалось загрузить изображения или определить их координаты")
                 return
             
             # Сортируем по координатам (сначала по row, потом по col)
-            images_data.sort(key=lambda x: (x[0], x[1]))
+            self.images_data.sort(key=lambda x: (x[0], x[1]))
             
             # Определяем размеры сетки
-            max_row = max(img[0] for img in images_data)  # Максимальная строка (Y)
-            max_col = max(img[1] for img in images_data)  # Максимальный столбец (X)
+            max_row = max(img[0] for img in self.images_data)  # Максимальная строка (Y)
+            max_col = max(img[1] for img in self.images_data)  # Максимальный столбец (X)
             
             # Очищаем виджет и создаем новый layout
             photo_widget = self.ui.photo_display_widget
@@ -569,7 +572,7 @@ class MainWindowControllerV2(QMainWindow):
             # Добавляем изображения в сетку
             # Нумерация: снизу вверх, слева направо
             # В QGridLayout строка 0 - это верх, поэтому инвертируем row
-            for row, col, file_path, image in images_data:
+            for row, col, file_path, image in self.images_data:
                 # Конвертируем BGR в RGB для Qt
                 rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_image.shape
@@ -605,7 +608,7 @@ class MainWindowControllerV2(QMainWindow):
             main_layout.addWidget(scroll_area)
             photo_widget.setLayout(main_layout)
             
-            print(f"Загружено {len(images_data)} изображений в сетку {max_row + 1}x{max_col + 1}")
+            print(f"Загружено {len(self.images_data)} изображений в сетку {max_row + 1}x{max_col + 1}")
             
         except Exception as e:
             self.show_error(f"Ошибка при загрузке изображений: {str(e)}")
@@ -614,8 +617,51 @@ class MainWindowControllerV2(QMainWindow):
     
     def run_inspection(self):
         """Обработчик нажатия на кнопку 'Запустить инспекцию'."""
-        button_name = self.ui.run_inspection_pushButton.text()
-        print(f"Нажата кнопка: {button_name}")
+        if not self.images_data:
+            self.show_error("Нет загруженных изображений. Сначала загрузите контрольные изображения.")
+            return
+        
+        try:
+            # Определяем путь к папке data (в корне проекта)
+            project_root = Path(__file__).parent.parent.parent
+            data_folder = project_root / "data"
+            
+            # Создаем папку data, если её нет
+            data_folder.mkdir(exist_ok=True)
+            
+            # Итерируемся по images_data и сохраняем изображения
+            saved_count = 0
+            for row, col, file_path, image in self.images_data:
+                # Получаем расширение исходного файла
+                original_extension = file_path.suffix
+                
+                # Формируем новое имя файла с префиксом tmp
+                # Формат: tmp_photo_X_Y.png
+                new_filename = f"tmp_photo_{col}_{row}{original_extension}"
+                new_file_path = data_folder / new_filename
+                
+                # Сохраняем изображение
+                success = cv2.imwrite(str(new_file_path), image)
+                if success:
+                    saved_count += 1
+                    print(f"Сохранено: {new_filename}")
+                else:
+                    print(f"Ошибка при сохранении: {new_filename}")
+            
+            if saved_count > 0:
+                print(f"Успешно сохранено {saved_count} из {len(self.images_data)} изображений в папку {data_folder}")
+                QMessageBox.information(
+                    self,
+                    "Инспекция завершена",
+                    f"Сохранено {saved_count} изображений в папку data"
+                )
+            else:
+                self.show_error("Не удалось сохранить ни одного изображения")
+                
+        except Exception as e:
+            self.show_error(f"Ошибка при сохранении изображений: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     # === Camera and CNC logic (unchanged) ===
 
