@@ -65,6 +65,7 @@ class MainWindowControllerV2(QMainWindow):
 
         # Etalon images variables
         self.etalon_images = []  # Список загруженных эталонных изображений (numpy arrays)
+        self.etalon_image_names = []  # Список имен файлов изображений
         self.current_etalon_index = -1  # Индекс текущего изображения (-1 если нет изображений)
         
         # Reference to marking window to prevent garbage collection
@@ -346,6 +347,7 @@ class MainWindowControllerV2(QMainWindow):
         
         try:
             loaded_images = []
+            loaded_names = []
             for file_path in file_paths:
                 # Загружаем изображение с помощью OpenCV
                 image = cv2.imread(file_path)
@@ -353,9 +355,13 @@ class MainWindowControllerV2(QMainWindow):
                     print(f"Предупреждение: не удалось загрузить изображение {file_path}")
                     continue
                 loaded_images.append(image)
+                # Извлекаем имя файла без расширения
+                file_name = Path(file_path).stem
+                loaded_names.append(file_name)
             
             if loaded_images:
                 self.etalon_images = loaded_images
+                self.etalon_image_names = loaded_names
                 self.current_etalon_index = 0
                 self.display_current_etalon_image()
                 print(f"Загружено {len(self.etalon_images)} эталонных изображений")
@@ -447,11 +453,15 @@ class MainWindowControllerV2(QMainWindow):
                 self.marking_window.activateWindow()
                 return
             
-            # Получаем номер изображения (индекс + 1)
-            image_number = self.current_etalon_index + 1
+            # Получаем имя изображения
+            if self.current_etalon_index < len(self.etalon_image_names):
+                image_name = self.etalon_image_names[self.current_etalon_index]
+            else:
+                # Fallback на номер, если имя недоступно
+                image_name = f"image_{self.current_etalon_index + 1}"
             
             # Создаем и показываем новое окно как отдельное окно (не дочернее)
-            self.marking_window = ImageMarkingWindow(current_image, image_number=image_number, parent=None)
+            self.marking_window = ImageMarkingWindow(current_image, image_name=image_name, parent=None)
             # Сохраняем ссылку на главное окно в окне разметки для очистки при закрытии
             self.marking_window.main_window_ref = self
             
@@ -1270,15 +1280,15 @@ class ImageDisplayWidget(QWidget):
 class ImageMarkingWindow(QWidget):
     """Окно для разметки изображения."""
     
-    def __init__(self, image, image_number=None, parent=None):
+    def __init__(self, image, image_name=None, parent=None):
         super().__init__(parent)
         # Устанавливаем флаги окна для создания отдельного окна
         self.setWindowFlags(Qt.WindowType.Window)
         self.setWindowTitle("Разметка изображения")
         self.setMinimumSize(800, 600)
         
-        # Сохраняем номер/имя изображения
-        self.image_number = image_number if image_number is not None else "unknown"
+        # Сохраняем имя изображения
+        self.image_name = image_name if image_name is not None else "unknown"
         
         # Сохраняем оригинальное изображение (numpy array) для масштабирования
         self.original_cv_image = image
@@ -1606,8 +1616,8 @@ class ImageMarkingWindow(QWidget):
                     'name': name if name else ""
                 })
             
-            # Обновляем данные для текущего изображения
-            image_key = str(self.image_number)
+            # Обновляем данные для текущего изображения (используем имя изображения как ключ)
+            image_key = self.image_name
             all_bboxes_data[image_key] = bboxes_data
             
             # Сохраняем все данные обратно в JSON
@@ -1628,8 +1638,8 @@ class ImageMarkingWindow(QWidget):
             with open(bboxes_file, 'r', encoding='utf-8') as f:
                 all_bboxes_data = json.load(f)
             
-            # Извлекаем bboxes для текущего изображения
-            image_key = str(self.image_number)
+            # Извлекаем bboxes для текущего изображения (используем имя изображения как ключ)
+            image_key = self.image_name
             if image_key not in all_bboxes_data:
                 return  # Нет bboxes для этого изображения
             
