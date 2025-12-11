@@ -631,7 +631,7 @@ class MainWindowControllerV2(QMainWindow):
             data_folder.mkdir(exist_ok=True)
             
             # Загружаем файл маппинга
-            mapping_file = project_root / "data" / "plate_3" / "control_4" / "etalon_mapping.json"
+            mapping_file = project_root / "markup_info" / "etalon_mapping.json"
             if not mapping_file.exists():
                 self.show_error(f"Файл маппинга не найден: {mapping_file}")
                 return
@@ -643,6 +643,15 @@ class MainWindowControllerV2(QMainWindow):
                 self.show_error("Файл маппинга не содержит данных")
                 return
             
+            # Загружаем bboxes из файла разметки
+            bboxes_file = project_root / "markup_info" / "bboxes.json"
+            if not bboxes_file.exists():
+                self.show_error(f"Файл bboxes не найден: {bboxes_file}")
+                return
+            
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                bboxes_data = json.load(f)
+            
             # Создаем словарь контрольных изображений для быстрого доступа
             control_images_dict = {}
             for row, col, file_path, image in self.images_data:
@@ -651,58 +660,49 @@ class MainWindowControllerV2(QMainWindow):
             # Обрабатываем каждое правило маппинга
             saved_count = 0
             for mapping in mapping_data['mappings']:
-                etalon_name = mapping.get('etalon', '')
-                etalon_bboxes_path = mapping.get('etalon_bboxes', '')
                 etalon_indices = mapping.get('etalon_indices', [])
                 control_indices_groups = mapping.get('control_indices', [])
                 
                 if not etalon_indices or not control_indices_groups:
-                    print(f"Предупреждение: пропущено правило маппинга для {etalon_name} - нет индексов")
+                    print(f"Предупреждение: пропущено правило маппинга - нет индексов")
                     continue
                 
-                # Загружаем bboxes из файла разметки
-                # Путь может быть относительным от project_root или абсолютным
-                if Path(etalon_bboxes_path).is_absolute():
-                    bboxes_file = Path(etalon_bboxes_path)
-                else:
-                    bboxes_file = project_root / etalon_bboxes_path
+                # Ищем эталонные изображения в стандартных местах
+                # Пробуем несколько возможных путей
+                possible_etalon_paths = [
+                    project_root / "data" / "plate_3" / "etalon_2" / "images",
+                    project_root / "data" / "plate_3" / "etalon_2",
+                    project_root / "data" / "plate_3" / "etalon" / "images",
+                    project_root / "data" / "plate_3" / "etalon",
+                ]
                 
-                if not bboxes_file.exists():
-                    print(f"Предупреждение: файл bboxes не найден: {bboxes_file}, используем markup_info/bboxes.json")
-                    bboxes_file = project_root / "markup_info" / "bboxes.json"
+                etalon_images_folder = None
+                for path in possible_etalon_paths:
+                    if path.exists():
+                        etalon_images_folder = path
+                        break
                 
-                if not bboxes_file.exists():
-                    print(f"Предупреждение: файл bboxes не найден: {bboxes_file}, пропускаем это правило")
+                if etalon_images_folder is None:
+                    print(f"Предупреждение: не найдена папка с эталонными изображениями, пропускаем правило")
                     continue
                 
-                with open(bboxes_file, 'r', encoding='utf-8') as f:
-                    bboxes_data = json.load(f)
-                
-                # Загружаем эталонные изображения
-                # Определяем папку с эталонными изображениями на основе имени эталона
-                etalon_images_folder = project_root / "data" / "plate_3" / etalon_name / "images"
-                if not etalon_images_folder.exists():
-                    # Пробуем альтернативный путь
-                    etalon_images_folder = project_root / "data" / "plate_3" / etalon_name
-                
+                # Загружаем эталонные изображения (только те, что указаны в etalon_indices)
                 etalon_images_dict = {}
-                
-                if etalon_images_folder.exists():
-                    for img_file in etalon_images_folder.iterdir():
-                        if img_file.suffix.lower() in ['.png', '.jpg', '.jpeg']:
-                            # Парсим имя файла для получения индексов (photo_X_Y.png)
-                            match = re.search(r'_(\d+)_(\d+)', img_file.stem)
-                            if match:
-                                col = int(match.group(1))
-                                row = int(match.group(2))
-                                # Загружаем только изображения из etalon_indices
-                                if [col, row] in etalon_indices:
-                                    etalon_img = cv2.imread(str(img_file))
-                                    if etalon_img is not None:
-                                        etalon_images_dict[(col, row)] = etalon_img
+                for img_file in etalon_images_folder.iterdir():
+                    if img_file.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+                        # Парсим имя файла для получения индексов (photo_X_Y.png)
+                        match = re.search(r'_(\d+)_(\d+)', img_file.stem)
+                        if match:
+                            col = int(match.group(1))
+                            row = int(match.group(2))
+                            # Загружаем только изображения из etalon_indices
+                            if [col, row] in etalon_indices:
+                                etalon_img = cv2.imread(str(img_file))
+                                if etalon_img is not None:
+                                    etalon_images_dict[(col, row)] = etalon_img
                 
                 if not etalon_images_dict:
-                    print(f"Предупреждение: не найдено эталонных изображений для {etalon_name}")
+                    print(f"Предупреждение: не найдено эталонных изображений для указанных индексов")
                     continue
                 
                 # Обрабатываем каждую группу контрольных индексов
