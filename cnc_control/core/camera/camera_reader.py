@@ -62,7 +62,7 @@ class FisheyeUndistorter:
 # Thread-Safe Camera Reader (undistort in get_image)
 # -----------------------------
 class ThreadSafeCameraReader:
-    def __init__(self, camera_id=4, calibration_file=None):
+    def __init__(self, camera_id=4, calibration_file=None, backend=None):
         """
         Initialize thread-safe camera reader.
         Undistortion (if any) is applied ONLY in get_image(), not in capture thread.
@@ -70,24 +70,66 @@ class ThreadSafeCameraReader:
         Args:
             camera_id (int or str): Camera index or video path
             calibration_file (str or None): Path to .json/.npz for undistortion.
+            backend: cv2.CAP_DSHOW or cv2.CAP_MSMF (None for auto)
         """
         self.camera_id = camera_id
         self.undistorter = None
         if calibration_file is not None:
             self.undistorter = FisheyeUndistorter(calibration_file)
 
-        self.cap = cv2.VideoCapture(camera_id)
+        # Try to use DirectShow backend on Windows (more stable than MSMF)
+        if backend is None:
+            try:
+                # Try DirectShow first (more stable on Windows)
+                self.cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+                if not self.cap.isOpened():
+                    # Fallback to MSMF
+                    self.cap = cv2.VideoCapture(camera_id, cv2.CAP_MSMF)
+            except (AttributeError, ValueError):
+                # Fallback to default backend if constants are not available
+                self.cap = cv2.VideoCapture(camera_id)
+        else:
+            self.cap = cv2.VideoCapture(camera_id, backend)
+            
         if not self.cap.isOpened():
             raise RuntimeError(f"Cannot open camera {camera_id}")
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        # Set resolution and FPS 4608x3456
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 8000)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 6000)
-        self.cap.set(cv2.CAP_PROP_FPS, 5)
         
+        # Set buffer size to reduce latency (helps with MSMF issues)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        # Set codec
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        
+        # Set resolution and FPS
+        preferred_width = 8000
+        preferred_height = 6000
+        preferred_fps = 5
+        
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, preferred_width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, preferred_height)
+        self.cap.set(cv2.CAP_PROP_FPS, preferred_fps)
+        
+        # Allow camera to apply settings
+        time.sleep(0.2)
+        
+        # Read a few frames to initialize (discard them)
+        # This is especially important for high resolution cameras
+        for _ in range(5):
+            ret, _ = self.cap.read()
+            if not ret:
+                break
+            time.sleep(0.1)  # Give camera more time for high-res frames
+        
+        # Get actual resolution from camera (may differ from requested)
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        print(f"📹 Camera opened: {self.width}x{self.height}")
+        actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        
+        print(f"📹 Camera opened: {self.width}x{self.height} @ {actual_fps:.1f} FPS")
+        if self.width != preferred_width or self.height != preferred_height:
+            print(f"⚠️  Requested {preferred_width}x{preferred_height}, got {self.width}x{self.height}")
+        if actual_fps != preferred_fps:
+            print(f"⚠️  Requested {preferred_fps} FPS, got {actual_fps:.1f} FPS")
 
         # If undistorter is used, verify resolution matches
         if self.undistorter is not None:
@@ -97,23 +139,39 @@ class ThreadSafeCameraReader:
                     f"calibration resolution {self.undistorter.resolution}"
                 )
 
-        self._latest_raw_frame = np.zeros((6000, 8000, 3), dtype= "uint8")
+        self._latest_raw_frame = None
         self._frame_lock = threading.Lock()
         self._running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
+        
+        # Wait a bit for first frame to be captured
+        time.sleep(0.2)
 
     def _capture_loop(self):
         """Capture raw frames in background."""
+        consecutive_failures = 0
+        max_failures = 10
+        
         while self._running:
-            with self._frame_lock:
-                ret = self.cap.read(self._latest_raw_frame)
+            # Don't pass buffer to read() - let it allocate its own frame
+            ret, frame = self.cap.read()
+            
             if not ret:
-                print("⚠️ Failed to read frame. Stopping capture.")
-                time.sleep(0.05)
+                consecutive_failures += 1
+                if consecutive_failures >= max_failures:
+                    print(f"⚠️ Failed to read frame {consecutive_failures} times. Camera may be disconnected.")
+                    time.sleep(0.1)
+                else:
+                    time.sleep(0.01)
                 continue
             
-
+            # Reset failure counter on success
+            consecutive_failures = 0
+            
+            # Store frame with lock protection
+            with self._frame_lock:
+                self._latest_raw_frame = frame.copy()
 
             time.sleep(0.001)  # optional: reduce CPU
 
@@ -124,20 +182,20 @@ class ThreadSafeCameraReader:
         Returns:
             np.ndarray or None: Undistorted (or raw) image, or None if not ready.
         """
-        # with self._frame_lock:
-        #     if self._latest_raw_frame is None:
-        #         return None
-        #     frame = self._latest_raw_frame.copy()
+        with self._frame_lock:
+            if self._latest_raw_frame is None:
+                return None
+            frame = self._latest_raw_frame.copy()
 
-        # # Apply undistortion OUTSIDE the lock (to avoid holding lock during processing)
-        # if self.undistorter is not None:
-        #     try:
-        #         frame = self.undistorter.undistort(frame)
-        #     except Exception as e:
-        #         print(f"❌ Undistortion failed in get_image(): {e}")
-        #         # Optionally return raw frame or None — here we return raw
-        #         # (you can change behavior as needed)
-        return self._latest_raw_frame
+        # Apply undistortion OUTSIDE the lock (to avoid holding lock during processing)
+        if self.undistorter is not None:
+            try:
+                frame = self.undistorter.undistort(frame)
+            except Exception as e:
+                print(f"❌ Undistortion failed in get_image(): {e}")
+                # Return raw frame if undistortion fails
+        
+        return frame
 
     def stop(self):
         """Stop background thread and release camera."""

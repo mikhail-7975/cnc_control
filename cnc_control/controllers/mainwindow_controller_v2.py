@@ -2071,10 +2071,51 @@ class ImageMarkingWindow(QWidget):
             self.main_window_ref.marking_window = None
         event.accept()
 
+    def rename_selected_bbox(self):
+        """Переименовать выбранный bbox через диалог."""
+        # Получаем индекс выбранного bbox
+        selected_index = None
+        
+        # Сначала проверяем, есть ли выбранный элемент в списке
+        current_item = self.bbox_list_widget.currentItem()
+        if current_item:
+            selected_index = self.bbox_list_widget.row(current_item)
+        # Если нет выбранного в списке, проверяем selected_box_index в image_widget
+        elif hasattr(self.image_widget, 'selected_box_index') and self.image_widget.selected_box_index is not None:
+            selected_index = self.image_widget.selected_box_index
+        
+        # Если нет выбранного bbox, ничего не делаем
+        if selected_index is None or selected_index < 0 or selected_index >= len(self.image_widget.bounding_boxes):
+            return
+        
+        # Получаем текущее имя bbox
+        box = self.image_widget.bounding_boxes[selected_index]
+        x1, y1, x2, y2, angle, selected, current_name = box
+        
+        # Показываем диалог для ввода нового имени
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Переименовать Bounding Box",
+            f"Введите новое имя для bbox #{selected_index + 1}:",
+            text=current_name if current_name else ""
+        )
+        
+        # Если пользователь нажал OK и ввел имя
+        if ok and new_name is not None:
+            # Обновляем имя в bbox
+            self.image_widget.bounding_boxes[selected_index] = (x1, y1, x2, y2, angle, selected, new_name)
+            # Обновляем отображение
+            self.image_widget.update()
+            # Обновляем список
+            self.update_bbox_list()
+            # Выделяем переименованный элемент в списке
+            if selected_index < self.bbox_list_widget.count():
+                self.bbox_list_widget.setCurrentRow(selected_index)
+
     def keyPressEvent(self, event):
         """Enter/Return — переименование выбранного бокса."""
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.image_widget.rename_selected_bbox(self)
+            self.rename_selected_bbox()
             return
         super().keyPressEvent(event)
 
