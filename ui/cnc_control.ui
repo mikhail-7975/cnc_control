@@ -405,9 +405,9 @@
                   </widget>
                  </item>
                  <item>
-                  <widget class="QLineEdit" name="camera_port_lineEdit">
-                   <property name="text">
-                    <string>/dev/video4</string>
+                  <widget class="QComboBox" name="camera_port_comboBox">
+                   <property name="editable">
+                    <bool>true</bool>
                    </property>
                   </widget>
                  </item>

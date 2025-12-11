@@ -10,6 +10,8 @@ import sys
 import cv2
 import time
 import json
+import os
+import glob
 from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
@@ -28,6 +30,31 @@ import math
 from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
+
+
+def get_available_video_devices():
+    """
+    Detect available video devices from system.
+    Returns a list of device paths like ['/dev/video0', '/dev/video1', ...]
+    On Linux, lists /dev/video* devices without opening them.
+    """
+    devices = []
+    
+    # On Linux, check /dev/video* devices
+    if sys.platform.startswith('linux'):
+        video_devices = glob.glob('/dev/video*')
+        # Filter to only character devices (exclude video*meta, video*index, etc.)
+        for device in sorted(video_devices):
+            if os.path.exists(device) and os.path.ischr(device):
+                devices.append(device)
+    else:
+        # On Windows, list common camera indices
+        # Note: On Windows, we can't easily enumerate cameras without opening them
+        # So we just provide common indices
+        for i in range(10):
+            devices.append(str(i))
+    
+    return devices
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -76,6 +103,9 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_image_label.setScaledContents(False)
         self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
         self.clear_etalon_display()
+
+        # Populate camera device combo box
+        self.populate_camera_devices()
 
         # Connect signals
         self.setup_connections()
@@ -473,9 +503,44 @@ class MainWindowControllerV2(QMainWindow):
         self.image_label.move(0, 0)
         self.image_label.resize(self.ui.image_displayer.size())
 
+    def populate_camera_devices(self):
+        """Populate the camera device combo box with available devices."""
+        # Try combo box first (new UI), fallback to line edit (old UI)
+        combo_box = getattr(self.ui, "camera_port_comboBox", None)
+        if combo_box is None:
+            # If combo box doesn't exist, we're using the old UI with line edit
+            return
+        
+        devices = get_available_video_devices()
+        combo_box.clear()
+        
+        if devices:
+            combo_box.addItems(devices)
+            # Select the first device by default, or /dev/video4 if it exists
+            if "/dev/video4" in devices:
+                index = devices.index("/dev/video4")
+                combo_box.setCurrentIndex(index)
+            else:
+                combo_box.setCurrentIndex(0)
+        else:
+            # No devices found, add a placeholder
+            combo_box.addItem("No devices found")
+    
     def toggle_camera(self):
         if self.cam is None:
-            port_text = self.ui.camera_port_lineEdit.text()
+            # Try combo box first (new UI), fallback to line edit (old UI)
+            combo_box = getattr(self.ui, "camera_port_comboBox", None)
+            if combo_box:
+                port_text = combo_box.currentText()
+            else:
+                # Fallback to line edit for backward compatibility
+                line_edit = getattr(self.ui, "camera_port_lineEdit", None)
+                port_text = line_edit.text() if line_edit else ""
+            
+            if not port_text or port_text == "No devices found":
+                self.show_error("Пожалуйста, выберите устройство камеры")
+                return
+            
             try:
                 port = int(port_text) if port_text.isdigit() else port_text
                 self.cam = ThreadSafeCameraReader(camera_id=port)

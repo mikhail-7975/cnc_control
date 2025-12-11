@@ -3,6 +3,8 @@ import cv2
 import time
 import traceback
 import logging
+import os
+import glob
 
 from PyQt6.QtWidgets import QMainWindow, QApplication, QLabel
 from PyQt6.QtWidgets import (
@@ -21,6 +23,31 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def get_available_video_devices():
+    """
+    Detect available video devices from system.
+    Returns a list of device paths like ['/dev/video0', '/dev/video1', ...]
+    On Linux, lists /dev/video* devices without opening them.
+    """
+    devices = []
+    
+    # On Linux, check /dev/video* devices
+    if sys.platform.startswith('linux'):
+        video_devices = glob.glob('/dev/video*')
+        # Filter to only character devices (exclude video*meta, video*index, etc.)
+        for device in sorted(video_devices):
+            if os.path.exists(device) and os.path.ischr(device):
+                devices.append(device)
+    else:
+        # On Windows, list common camera indices
+        # Note: On Windows, we can't easily enumerate cameras without opening them
+        # So we just provide common indices
+        for i in range(10):
+            devices.append(str(i))
+    
+    return devices
 
 
 class MainWindowController(QMainWindow):
@@ -89,6 +116,9 @@ class MainWindowController(QMainWindow):
         self.take_image_current_filename = "keypoints/"
 
         self.inspection_coords_of_elements_filename = ""
+
+        # Populate camera device combo box
+        self.populate_camera_devices()
 
         # Connect signals
         self.setup_connections()
@@ -180,10 +210,11 @@ class MainWindowController(QMainWindow):
 
     def _connect_camera(self, port_text: str):
         try:
-            # TODO: Предлагаю сделать выпадающий список с доступными портами (запрашивать их у сиситемы), 
-            if port_text and port_text.strip():
-                port_text = port_text.strip()
-                port = int(port_text) if port_text.isdigit() else port_text
+            if not port_text or not port_text.strip():
+                raise ValueError("Порт камеры не указан")
+            
+            port_text = port_text.strip()
+            port = int(port_text) if port_text.isdigit() else port_text
 
             logger.debug("Trying to create ThreadSafeCameraReader for port: %s", str(port))
             self.cam = ThreadSafeCameraReader(camera_id=port)
@@ -210,11 +241,43 @@ class MainWindowController(QMainWindow):
         except Exception:
             logger.exception("Ошибка при отключении камеры")
 
+    def populate_camera_devices(self):
+        """Populate the camera device combo box with available devices."""
+        combo_box = getattr(self.ui, "camera_port_comboBox", None)
+        if combo_box is None:
+            # Fallback to line edit if combo box doesn't exist yet
+            return
+        
+        devices = get_available_video_devices()
+        combo_box.clear()
+        
+        if devices:
+            combo_box.addItems(devices)
+            # Select the first device by default, or /dev/video4 if it exists
+            if "/dev/video4" in devices:
+                index = devices.index("/dev/video4")
+                combo_box.setCurrentIndex(index)
+            else:
+                combo_box.setCurrentIndex(0)
+        else:
+            # No devices found, add a placeholder
+            combo_box.addItem("No devices found")
+            logger.warning("No video devices found on the system")
+    
     def toggle_camera(self):
         if self.cam is None:
-            port_text = getattr(self.ui, "camera_port_lineEdit", None)
-            port_text = port_text.text() if port_text else ""
-            self._connect_camera(port_text)
+            # Try combo box first, fallback to line edit for backward compatibility
+            combo_box = getattr(self.ui, "camera_port_comboBox", None)
+            if combo_box:
+                port_text = combo_box.currentText()
+            else:
+                line_edit = getattr(self.ui, "camera_port_lineEdit", None)
+                port_text = line_edit.text() if line_edit else ""
+            
+            if port_text and port_text != "No devices found":
+                self._connect_camera(port_text)
+            else:
+                self.show_error("Пожалуйста, выберите устройство камеры")
         else:
             self._disconnect_camera()
 
@@ -233,7 +296,13 @@ class MainWindowController(QMainWindow):
                 try:
                     cam_id = getattr(self.cam, 'camera_id', None)
                 except Exception:
-                    cam_id = None
+                    # Fallback: get from combo box or line edit
+                    combo_box = getattr(self.ui, "camera_port_comboBox", None)
+                    if combo_box:
+                        cam_id = combo_box.currentText()
+                    else:
+                        line_edit = getattr(self.ui, "camera_port_lineEdit", None)
+                        cam_id = line_edit.text() if line_edit else None
                 try:
                     self.cam.stop()
                 except Exception:
@@ -241,8 +310,10 @@ class MainWindowController(QMainWindow):
                 self.cam = None
                 # Попробуем пересоздать
                 try:
-                    self.cam = ThreadSafeCameraReader(camera_id=cam_id)
-                    logger.info("Реконнект: создан новый ThreadSafeCameraReader(%s)", str(cam_id))
+                    if cam_id:
+                        port = int(cam_id) if isinstance(cam_id, str) and cam_id.isdigit() else cam_id
+                        self.cam = ThreadSafeCameraReader(camera_id=port)
+                        logger.info("Реконнект: создан новый ThreadSafeCameraReader(%s)", str(port))
                 except Exception:
                     logger.exception("Ошибка при попытке реконнекта камеры")
                 # ждём следующий тик
