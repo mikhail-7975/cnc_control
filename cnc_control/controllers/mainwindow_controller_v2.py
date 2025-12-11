@@ -36,7 +36,7 @@ import math
 from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
-from cnc_control.utils import create_component_collage
+from cnc_control.utils import create_component_collage, save_component_crops
 from cnc_control.core.algorithms import SiftImageAligner
 
 
@@ -776,7 +776,7 @@ class MainWindowControllerV2(QMainWindow):
                             continue
                         
                         # Создаем коллаж с кропами компонентов (используем выровненное контрольное изображение)
-                        saved_count += create_component_collage(
+                        saved_count += save_component_crops(
                             etalon_image, aligned_control_image, bboxes, col, row, 
                             data_folder, photo_key
                         )

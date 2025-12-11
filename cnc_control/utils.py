@@ -4,6 +4,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 
 def create_component_collage(etalon_image, control_image, bboxes, col, row, data_folder, photo_key):
@@ -170,6 +171,98 @@ def create_component_collage(etalon_image, control_image, bboxes, col, row, data
         
     except Exception as e:
         print(f"Ошибка при создании коллажа для ({col}, {row}): {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+def save_component_crops(etalon_image, control_image, bboxes, col, row, data_folder, photo_key):
+    """
+    Сохранить отдельные кропы компонентов из эталонного и контрольного изображений.
+    
+    Args:
+        etalon_image: Эталонное изображение (numpy array, BGR)
+        control_image: Контрольное изображение (numpy array, BGR)
+        bboxes: Список словарей с bboxes компонентов
+        col: Столбец контрольного изображения
+        row: Строка контрольного изображения
+        data_folder: Путь к папке для сохранения
+        photo_key: Ключ для логирования (например, "photo_0_0")
+    
+    Returns:
+        int: Количество успешно сохраненных кропов
+    """
+    try:
+        num_components = len(bboxes)
+        if num_components == 0:
+            return 0
+        
+        saved_count = 0
+        
+        # Обрабатываем каждый компонент
+        for idx, bbox in enumerate(bboxes):
+            x1, y1, x2, y2 = int(bbox['x1']), int(bbox['y1']), int(bbox['x2']), int(bbox['y2'])
+            component_name = bbox.get('name', f'Component_{idx+1}')
+            angle = bbox.get('angle', 0.0)
+            
+            # Проверяем границы изображения
+            etalon_h, etalon_w = etalon_image.shape[:2]
+            control_h, control_w = control_image.shape[:2]
+            
+            # Ограничиваем координаты границами изображения
+            x1_safe = max(0, min(x1, etalon_w, control_w))
+            y1_safe = max(0, min(y1, etalon_h, control_h))
+            x2_safe = max(x1_safe + 1, min(x2, etalon_w, control_w))
+            y2_safe = max(y1_safe + 1, min(y2, etalon_h, control_h))
+            
+            # Делаем кроп из эталонного изображения
+            etalon_crop = etalon_image[y1_safe:y2_safe, x1_safe:x2_safe].copy()
+            
+            # Делаем кроп из контрольного изображения
+            control_crop = control_image[y1_safe:y2_safe, x1_safe:x2_safe].copy()
+            
+            # Проверяем, что кропы не пустые
+            if etalon_crop.size == 0 or control_crop.size == 0:
+                print(f"Предупреждение: пустой кроп для компонента {component_name} в {photo_key}")
+                continue
+            
+            # Если нужно, применяем поворот
+            if abs(angle) > 0.1:
+                center = (etalon_crop.shape[1] // 2, etalon_crop.shape[0] // 2)
+                M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                etalon_crop = cv2.warpAffine(etalon_crop, M, (etalon_crop.shape[1], etalon_crop.shape[0]))
+                control_crop = cv2.warpAffine(control_crop, M, (control_crop.shape[1], control_crop.shape[0]))
+            
+            # Нормализуем имя компонента для использования в имени файла
+            # Заменяем недопустимые символы на подчеркивания
+            safe_component_name = component_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+            safe_component_name = ''.join(c if c.isalnum() or c in ['_', '-'] else '_' for c in safe_component_name)
+            
+            # Формируем имена файлов
+            # Формат: photo_X_Y_component_name_etalon.png и photo_X_Y_component_name_control.png
+            etalon_filename = f"{photo_key}_{safe_component_name}_etalon.png"
+            control_filename = f"{photo_key}_{safe_component_name}_control.png"
+            
+            etalon_file_path = data_folder / etalon_filename
+            control_file_path = data_folder / control_filename
+            
+            # Сохраняем кропы
+            etalon_success = cv2.imwrite(str(etalon_file_path), etalon_crop)
+            control_success = cv2.imwrite(str(control_file_path), control_crop)
+            
+            if etalon_success and control_success:
+                saved_count += 2
+                print(f"Сохранено: {etalon_filename}, {control_filename}")
+            else:
+                if not etalon_success:
+                    print(f"Ошибка при сохранении: {etalon_filename}")
+                if not control_success:
+                    print(f"Ошибка при сохранении: {control_filename}")
+        
+        return saved_count
+        
+    except Exception as e:
+        print(f"Ошибка при сохранении кропов для ({col}, {row}): {str(e)}")
         import traceback
         traceback.print_exc()
         return 0
