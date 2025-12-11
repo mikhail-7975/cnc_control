@@ -637,8 +637,11 @@ class ImageDisplayWidget(QWidget):
         self.rotation_mode = False
         self.rotation_start_angle = 0
         self.image_offset = QPoint(0, 0)
+        self.pan_offset = QPoint(0, 0)  # Смещение для панорамирования
         self.last_mouse_pos = QPoint(0, 0)
         self.dragging_box = False
+        self.panning = False  # Флаг панорамирования мышью
+        self.pan_start_pos = QPoint(0, 0)  # Начальная позиция мыши при панорамировании
         self.drag_type = None  # 'corner', 'edge', 'move', or None
         self.drag_corner_index = None  # 0-3 for corners
         self.drag_start_pos = None
@@ -750,11 +753,11 @@ class ImageDisplayWidget(QWidget):
         
         # Рисуем изображение
         if self.display_pixmap:
-            # Центрируем изображение
+            # Центрируем изображение и применяем смещение панорамирования
             pixmap_rect = self.display_pixmap.rect()
             widget_rect = self.rect()
-            x = (widget_rect.width() - pixmap_rect.width()) // 2
-            y = (widget_rect.height() - pixmap_rect.height()) // 2
+            x = (widget_rect.width() - pixmap_rect.width()) // 2 + self.pan_offset.x()
+            y = (widget_rect.height() - pixmap_rect.height()) // 2 + self.pan_offset.y()
             painter.drawPixmap(x, y, self.display_pixmap)
             self.image_offset = QPoint(x, y)
         else:
@@ -909,6 +912,12 @@ class ImageDisplayWidget(QWidget):
             # Правый клик - режим поворота
             if self.selected_box_index is not None:
                 self.rotation_mode = True
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Средняя кнопка мыши - начало панорамирования
+            if not self.dragging_box and not self.drawing_box:
+                self.panning = True
+                self.pan_start_pos = event.position().toPoint()
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
     
     def mouseMoveEvent(self, event):
         """Обработка движения мыши."""
@@ -1075,6 +1084,15 @@ class ImageDisplayWidget(QWidget):
             self.update()
         elif self.drawing_box:
             self.update()
+        elif self.panning:
+            # Панорамирование изображения
+            current_pos = event.position().toPoint()
+            dx = current_pos.x() - self.pan_start_pos.x()
+            dy = current_pos.y() - self.pan_start_pos.y()
+            self.pan_offset.setX(self.pan_offset.x() + dx)
+            self.pan_offset.setY(self.pan_offset.y() + dy)
+            self.pan_start_pos = current_pos
+            self.update()
     
     def mouseReleaseEvent(self, event):
         """Обработка отпускания мыши."""
@@ -1125,6 +1143,18 @@ class ImageDisplayWidget(QWidget):
                 self.drag_corner_index = None
                 self.drag_start_pos = None
                 self.drag_start_box = None
+        
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Завершение панорамирования
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Завершение панорамирования
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
     
     def _show_name_dialog_for_selected_box(self):
         """Показать диалог для ввода имени выбранного бокса."""
@@ -1166,6 +1196,28 @@ class ImageDisplayWidget(QWidget):
                 # Обновляем список bboxes в окне разметки
                 if hasattr(self, 'marking_window') and self.marking_window:
                     self.marking_window.update_bbox_list()
+        elif event.key() == Qt.Key.Key_Left:
+            # Стрелка влево - панорамирование влево
+            self.pan_offset.setX(self.pan_offset.x() + 20)
+            self.update()
+        elif event.key() == Qt.Key.Key_Right:
+            # Стрелка вправо - панорамирование вправо
+            self.pan_offset.setX(self.pan_offset.x() - 20)
+            self.update()
+        elif event.key() == Qt.Key.Key_Up:
+            # Стрелка вверх - панорамирование вверх
+            self.pan_offset.setY(self.pan_offset.y() + 20)
+            self.update()
+        elif event.key() == Qt.Key.Key_Down:
+            # Стрелка вниз - панорамирование вниз
+            self.pan_offset.setY(self.pan_offset.y() - 20)
+            self.update()
+        elif event.key() == Qt.Key.Key_Space:
+            # Пробел - начало панорамирования мышью
+            if not self.dragging_box and not self.drawing_box:
+                self.panning = True
+                self.pan_start_pos = self.mapFromGlobal(QCursor.pos())
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
         else:
             super().keyPressEvent(event)
     
@@ -1189,6 +1241,15 @@ class ImageDisplayWidget(QWidget):
         
         # Если Ctrl не нажат, передаем событие дальше
         super().wheelEvent(event)
+    
+    def keyReleaseEvent(self, event):
+        """Обработка отпускания клавиш."""
+        if event.key() == Qt.Key.Key_Space:
+            # Отпускание пробела - завершение панорамирования
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        super().keyReleaseEvent(event)
 
 
 class ImageMarkingWindow(QWidget):
