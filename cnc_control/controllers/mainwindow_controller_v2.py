@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
+    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
@@ -1093,6 +1093,9 @@ class ImageDisplayWidget(QWidget):
             self.pan_offset.setY(self.pan_offset.y() + dy)
             self.pan_start_pos = current_pos
             self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
     
     def mouseReleaseEvent(self, event):
         """Обработка отпускания мыши."""
@@ -1200,18 +1203,30 @@ class ImageDisplayWidget(QWidget):
             # Стрелка влево - панорамирование влево
             self.pan_offset.setX(self.pan_offset.x() + 20)
             self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
         elif event.key() == Qt.Key.Key_Right:
             # Стрелка вправо - панорамирование вправо
             self.pan_offset.setX(self.pan_offset.x() - 20)
             self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
         elif event.key() == Qt.Key.Key_Up:
             # Стрелка вверх - панорамирование вверх
             self.pan_offset.setY(self.pan_offset.y() + 20)
             self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
         elif event.key() == Qt.Key.Key_Down:
             # Стрелка вниз - панорамирование вниз
             self.pan_offset.setY(self.pan_offset.y() - 20)
             self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
         elif event.key() == Qt.Key.Key_Space:
             # Пробел - начало панорамирования мышью
             if not self.dragging_box and not self.drawing_box:
@@ -1282,7 +1297,18 @@ class ImageMarkingWindow(QWidget):
         self.image_widget = ImageDisplayWidget()
         # Сохраняем ссылку на окно в виджете для обновления списка
         self.image_widget.marking_window = self
-        main_layout.addWidget(self.image_widget, stretch=1)
+        
+        # Обертываем виджет изображения в QScrollArea для навигации с помощью scrollbars
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidget(self.image_widget)
+        self.scroll_area.setWidgetResizable(False)  # Виджет не будет автоматически изменять размер
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Подключаем сигналы прокрутки для синхронизации с pan_offset
+        self.scroll_area.horizontalScrollBar().valueChanged.connect(self.on_horizontal_scroll)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self.on_vertical_scroll)
+        
+        main_layout.addWidget(self.scroll_area, stretch=1)
         
         # Создаем список для отображения имен bboxes
         bbox_list_layout = QVBoxLayout()
@@ -1324,6 +1350,96 @@ class ImageMarkingWindow(QWidget):
         
         # Обновляем список bboxes
         self.update_bbox_list()
+    
+    def on_horizontal_scroll(self, value):
+        """Обработка горизонтальной прокрутки."""
+        # Синхронизируем pan_offset с позицией scrollbar
+        if hasattr(self, 'image_widget') and hasattr(self, 'scroll_area'):
+            h_scrollbar = self.scroll_area.horizontalScrollBar()
+            max_value = h_scrollbar.maximum()
+            if max_value > 0:
+                # Преобразуем значение scrollbar в pan_offset
+                # Scrollbar: 0 (слева) до max (справа)
+                # Когда scrollbar = 0, изображение сдвинуто вправо (pan_offset отрицательный)
+                # Когда scrollbar = max, изображение сдвинуто влево (pan_offset положительный)
+                center_x = max_value // 2
+                self.image_widget.pan_offset.setX(center_x - value)
+                self.image_widget.update()
+    
+    def on_vertical_scroll(self, value):
+        """Обработка вертикальной прокрутки."""
+        # Синхронизируем pan_offset с позицией scrollbar
+        if hasattr(self, 'image_widget') and hasattr(self, 'scroll_area'):
+            v_scrollbar = self.scroll_area.verticalScrollBar()
+            max_value = v_scrollbar.maximum()
+            if max_value > 0:
+                # Преобразуем значение scrollbar в pan_offset
+                # Scrollbar: 0 (вверху) до max (внизу)
+                # Когда scrollbar = 0, изображение сдвинуто вниз (pan_offset отрицательный)
+                # Когда scrollbar = max, изображение сдвинуто вверх (pan_offset положительный)
+                center_y = max_value // 2
+                self.image_widget.pan_offset.setY(center_y - value)
+                self.image_widget.update()
+    
+    def update_scrollbars(self):
+        """Обновить позиции scrollbars на основе pan_offset и размера изображения."""
+        if not hasattr(self, 'scroll_area') or not hasattr(self, 'image_widget'):
+            return
+        
+        # Вычисляем размеры для scrollbars на основе отображаемого pixmap
+        if not self.image_widget.display_pixmap:
+            return
+            
+        pixmap_size = self.image_widget.display_pixmap.size()
+        viewport_size = self.scroll_area.viewport().size()
+        
+        # Устанавливаем минимальный размер виджета равным размеру pixmap
+        self.image_widget.setMinimumSize(pixmap_size)
+        self.image_widget.resize(pixmap_size)
+        
+        # Обновляем диапазоны scrollbars
+        h_scrollbar = self.scroll_area.horizontalScrollBar()
+        v_scrollbar = self.scroll_area.verticalScrollBar()
+        
+        # Временно блокируем сигналы, чтобы избежать рекурсии
+        h_scrollbar.blockSignals(True)
+        v_scrollbar.blockSignals(True)
+        
+        if pixmap_size.width() > viewport_size.width():
+            h_max = pixmap_size.width() - viewport_size.width()
+            h_scrollbar.setMaximum(h_max)
+            h_scrollbar.setPageStep(viewport_size.width())
+            # Устанавливаем позицию на основе pan_offset
+            # pan_offset положительный = изображение сдвинуто влево = scrollbar должен быть меньше центра
+            # pan_offset отрицательный = изображение сдвинуто вправо = scrollbar должен быть больше центра
+            center_x = h_max // 2
+            scroll_value = center_x - self.image_widget.pan_offset.x()
+            scroll_value = max(0, min(h_max, scroll_value))  # Ограничиваем диапазон
+            h_scrollbar.setValue(int(scroll_value))
+            h_scrollbar.setVisible(True)
+        else:
+            h_scrollbar.setMaximum(0)
+            h_scrollbar.setVisible(False)
+        
+        if pixmap_size.height() > viewport_size.height():
+            v_max = pixmap_size.height() - viewport_size.height()
+            v_scrollbar.setMaximum(v_max)
+            v_scrollbar.setPageStep(viewport_size.height())
+            # Устанавливаем позицию на основе pan_offset
+            # pan_offset положительный = изображение сдвинуто вверх = scrollbar должен быть меньше центра
+            # pan_offset отрицательный = изображение сдвинуто вниз = scrollbar должен быть больше центра
+            center_y = v_max // 2
+            scroll_value = center_y - self.image_widget.pan_offset.y()
+            scroll_value = max(0, min(v_max, scroll_value))  # Ограничиваем диапазон
+            v_scrollbar.setValue(int(scroll_value))
+            v_scrollbar.setVisible(True)
+        else:
+            v_scrollbar.setMaximum(0)
+            v_scrollbar.setVisible(False)
+        
+        # Разблокируем сигналы
+        h_scrollbar.blockSignals(False)
+        v_scrollbar.blockSignals(False)
     
     def display_image(self, image=None):
         """Отобразить изображение в окне с учетом текущего масштаба."""
@@ -1379,6 +1495,10 @@ class ImageMarkingWindow(QWidget):
             # Устанавливаем изображение в виджет
             self.image_widget.set_image(scaled_pixmap)
             
+            # Обновляем scrollbars после установки изображения
+            # Используем QTimer для отложенного обновления после того, как виджет обновится
+            QTimer.singleShot(10, self.update_scrollbars)
+            
         except Exception as e:
             error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
             layout = self.layout()
@@ -1400,6 +1520,9 @@ class ImageMarkingWindow(QWidget):
         if old_scale != self.zoom_scale:
             self._update_bboxes_scale(old_scale, self.zoom_scale)
             self.display_image()
+            # Обновляем scrollbars после изменения масштаба
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(10, self.update_scrollbars)
     
     def _update_bboxes_scale(self, old_scale, new_scale):
         """Обновить координаты bboxes при изменении масштаба."""
