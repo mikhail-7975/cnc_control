@@ -37,6 +37,7 @@ from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
 from cnc_control.utils import create_component_collage
+from cnc_control.core.algorithms import SiftImageAligner
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -652,6 +653,17 @@ class MainWindowControllerV2(QMainWindow):
             with open(bboxes_file, 'r', encoding='utf-8') as f:
                 bboxes_data = json.load(f)
             
+            # Создаем выравниватель изображений
+            image_aligner = SiftImageAligner(
+                scale=0.25,
+                nfeatures=0,
+                contrast_threshold=0.06,
+                edge_threshold=15,
+                sigma=1.6,
+                match_ratio=0.75,
+                ransac_threshold=5.0
+            )
+            
             # Создаем словарь контрольных изображений для быстрого доступа
             control_images_dict = {}
             for row, col, file_path, image in self.images_data:
@@ -745,6 +757,10 @@ class MainWindowControllerV2(QMainWindow):
                         
                         etalon_image = etalon_images_dict[(etalon_col, etalon_row)]
                         
+                        # Выравниваем контрольное изображение относительно эталонного
+                        print(f"Выравнивание контрольного изображения ({col}, {row}) относительно эталона ({etalon_col}, {etalon_row})...")
+                        aligned_control_image = image_aligner.align(etalon_image, control_image)
+                        
                         # Формируем ключ для поиска bboxes (используем эталонный индекс)
                         photo_key = f"photo_{etalon_col}_{etalon_row}"
                         
@@ -759,9 +775,9 @@ class MainWindowControllerV2(QMainWindow):
                             print(f"Предупреждение: нет bboxes для {photo_key}")
                             continue
                         
-                        # Создаем коллаж с кропами компонентов
+                        # Создаем коллаж с кропами компонентов (используем выровненное контрольное изображение)
                         saved_count += create_component_collage(
-                            etalon_image, control_image, bboxes, col, row, 
+                            etalon_image, aligned_control_image, bboxes, col, row, 
                             data_folder, photo_key
                         )
             
