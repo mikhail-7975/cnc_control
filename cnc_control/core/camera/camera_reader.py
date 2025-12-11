@@ -81,7 +81,7 @@ class ThreadSafeCameraReader:
         if backend is None:
             try:
                 # Try DirectShow first (more stable on Windows)
-                self.cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+                self.cap = cv2.VideoCapture(camera_id)
                 if not self.cap.isOpened():
                     # Fallback to MSMF
                     self.cap = cv2.VideoCapture(camera_id, cv2.CAP_MSMF)
