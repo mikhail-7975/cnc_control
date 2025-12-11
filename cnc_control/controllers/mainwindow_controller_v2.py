@@ -14,6 +14,13 @@ import os
 import glob
 from pathlib import Path
 from datetime import datetime
+
+# Try to import pygrabber for Windows camera enumeration
+try:
+    from pygrabber.dshow_graph import FilterGraph
+    HAS_PYGRABBER = True
+except ImportError:
+    HAS_PYGRABBER = False
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
     QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea
@@ -35,8 +42,11 @@ from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
 def get_available_video_devices():
     """
     Detect available video devices from system.
-    Returns a list of device paths like ['/dev/video0', '/dev/video1', ...]
-    On Linux, lists /dev/video* devices without opening them.
+    Returns a list of tuples: [(device_id, device_name), ...]
+    - On Linux: device_id is the path like '/dev/video0', device_name is the same
+    - On Windows: device_id is the index (0, 1, 2...), device_name is the camera name from DirectShow
+    
+    This allows showing friendly names in the UI while using the correct ID for OpenCV.
     """
     devices = []
     
@@ -46,13 +56,26 @@ def get_available_video_devices():
         # Filter to only character devices (exclude video*meta, video*index, etc.)
         for device in sorted(video_devices):
             if os.path.exists(device) and os.path.ischr(device):
-                devices.append(device)
+                devices.append((device, device))  # Use path as both ID and name
     else:
-        # On Windows, list common camera indices
-        # Note: On Windows, we can't easily enumerate cameras without opening them
-        # So we just provide common indices
-        for i in range(10):
-            devices.append(str(i))
+        # On Windows, use pygrabber to enumerate cameras via DirectShow
+        if HAS_PYGRABBER:
+            try:
+                graph = FilterGraph()
+                video_devices = graph.get_input_devices()
+                # pygrabber returns list of device names, index corresponds to OpenCV index
+                if video_devices:
+                    for idx, device_name in enumerate(video_devices):
+                        devices.append((str(idx), device_name))  # Store index as ID, name for display
+            except Exception as e:
+                # Fallback to numeric indices if pygrabber fails
+                print(f"Warning: Failed to enumerate cameras with pygrabber: {e}")
+                for i in range(10):
+                    devices.append((str(i), f"Camera {i}"))
+        else:
+            # Fallback to numeric indices if pygrabber is not available
+            for i in range(10):
+                devices.append((str(i), f"Camera {i}"))
     
     return devices
 
@@ -515,34 +538,44 @@ class MainWindowControllerV2(QMainWindow):
         combo_box.clear()
         
         if devices:
-            combo_box.addItems(devices)
+            # devices is now a list of tuples: (device_id, device_name)
+            for device_id, device_name in devices:
+                combo_box.addItem(device_name, device_id)  # Display name, store ID as data
+            
             # Select the first device by default, or /dev/video4 if it exists
-            if "/dev/video4" in devices:
-                index = devices.index("/dev/video4")
-                combo_box.setCurrentIndex(index)
-            else:
-                combo_box.setCurrentIndex(0)
+            default_index = 0
+            for idx, (device_id, device_name) in enumerate(devices):
+                if device_id == "/dev/video4" or device_name == "/dev/video4":
+                    default_index = idx
+                    break
+            combo_box.setCurrentIndex(default_index)
         else:
             # No devices found, add a placeholder
-            combo_box.addItem("No devices found")
+            combo_box.addItem("No devices found", "")
+            print("Warning: No video devices found on the system")
     
     def toggle_camera(self):
         if self.cam is None:
             # Try combo box first (new UI), fallback to line edit (old UI)
             combo_box = getattr(self.ui, "camera_port_comboBox", None)
             if combo_box:
-                port_text = combo_box.currentText()
+                # Get device ID from combo box data (stored when populating)
+                device_id = combo_box.currentData()
+                if not device_id:
+                    # If no data, try current text (fallback for manually entered values)
+                    device_id = combo_box.currentText()
             else:
                 # Fallback to line edit for backward compatibility
                 line_edit = getattr(self.ui, "camera_port_lineEdit", None)
-                port_text = line_edit.text() if line_edit else ""
+                device_id = line_edit.text() if line_edit else ""
             
-            if not port_text or port_text == "No devices found":
+            if not device_id or device_id == "No devices found":
                 self.show_error("Пожалуйста, выберите устройство камеры")
                 return
             
             try:
-                port = int(port_text) if port_text.isdigit() else port_text
+                # Convert to int if it's a numeric string (Windows index), otherwise use as-is (Linux path)
+                port = int(device_id) if device_id.isdigit() else device_id
                 self.cam = ThreadSafeCameraReader(camera_id=port)
                 self.timer.start(200)
                 self.ui.connect_camera_button.setText("Отключить камеру")
