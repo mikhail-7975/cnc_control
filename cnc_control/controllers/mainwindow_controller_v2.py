@@ -36,6 +36,7 @@ import math
 from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
+from cnc_control.utils import create_component_collage
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -629,40 +630,156 @@ class MainWindowControllerV2(QMainWindow):
             # Создаем папку data, если её нет
             data_folder.mkdir(exist_ok=True)
             
-            # Итерируемся по images_data и сохраняем изображения
-            saved_count = 0
+            # Загружаем файл маппинга
+            mapping_file = project_root / "data" / "plate_3" / "control_4" / "etalon_mapping.json"
+            if not mapping_file.exists():
+                self.show_error(f"Файл маппинга не найден: {mapping_file}")
+                return
+            
+            with open(mapping_file, 'r', encoding='utf-8') as f:
+                mapping_data = json.load(f)
+            
+            if 'mappings' not in mapping_data or not mapping_data['mappings']:
+                self.show_error("Файл маппинга не содержит данных")
+                return
+            
+            # Создаем словарь контрольных изображений для быстрого доступа
+            control_images_dict = {}
             for row, col, file_path, image in self.images_data:
-                # Получаем расширение исходного файла
-                original_extension = file_path.suffix
+                control_images_dict[(col, row)] = image
+            
+            # Обрабатываем каждое правило маппинга
+            saved_count = 0
+            for mapping in mapping_data['mappings']:
+                etalon_name = mapping.get('etalon', '')
+                etalon_bboxes_path = mapping.get('etalon_bboxes', '')
+                etalon_indices = mapping.get('etalon_indices', [])
+                control_indices_groups = mapping.get('control_indices', [])
                 
-                # Формируем новое имя файла с префиксом tmp
-                # Формат: tmp_photo_X_Y.png
-                new_filename = f"tmp_photo_{col}_{row}{original_extension}"
-                new_file_path = data_folder / new_filename
+                if not etalon_indices or not control_indices_groups:
+                    print(f"Предупреждение: пропущено правило маппинга для {etalon_name} - нет индексов")
+                    continue
                 
-                # Сохраняем изображение
-                success = cv2.imwrite(str(new_file_path), image)
-                if success:
-                    saved_count += 1
-                    print(f"Сохранено: {new_filename}")
+                # Загружаем bboxes из файла разметки
+                # Путь может быть относительным от project_root или абсолютным
+                if Path(etalon_bboxes_path).is_absolute():
+                    bboxes_file = Path(etalon_bboxes_path)
                 else:
-                    print(f"Ошибка при сохранении: {new_filename}")
+                    bboxes_file = project_root / etalon_bboxes_path
+                
+                if not bboxes_file.exists():
+                    print(f"Предупреждение: файл bboxes не найден: {bboxes_file}, используем markup_info/bboxes.json")
+                    bboxes_file = project_root / "markup_info" / "bboxes.json"
+                
+                if not bboxes_file.exists():
+                    print(f"Предупреждение: файл bboxes не найден: {bboxes_file}, пропускаем это правило")
+                    continue
+                
+                with open(bboxes_file, 'r', encoding='utf-8') as f:
+                    bboxes_data = json.load(f)
+                
+                # Загружаем эталонные изображения
+                # Определяем папку с эталонными изображениями на основе имени эталона
+                etalon_images_folder = project_root / "data" / "plate_3" / etalon_name / "images"
+                if not etalon_images_folder.exists():
+                    # Пробуем альтернативный путь
+                    etalon_images_folder = project_root / "data" / "plate_3" / etalon_name
+                
+                etalon_images_dict = {}
+                
+                if etalon_images_folder.exists():
+                    for img_file in etalon_images_folder.iterdir():
+                        if img_file.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+                            # Парсим имя файла для получения индексов (photo_X_Y.png)
+                            match = re.search(r'_(\d+)_(\d+)', img_file.stem)
+                            if match:
+                                col = int(match.group(1))
+                                row = int(match.group(2))
+                                # Загружаем только изображения из etalon_indices
+                                if [col, row] in etalon_indices:
+                                    etalon_img = cv2.imread(str(img_file))
+                                    if etalon_img is not None:
+                                        etalon_images_dict[(col, row)] = etalon_img
+                
+                if not etalon_images_dict:
+                    print(f"Предупреждение: не найдено эталонных изображений для {etalon_name}")
+                    continue
+                
+                # Обрабатываем каждую группу контрольных индексов
+                for control_indices_group in control_indices_groups:
+                    # Создаем сопоставление: эталонный индекс -> контрольный индекс
+                    if len(etalon_indices) != len(control_indices_group):
+                        print(f"Предупреждение: количество эталонных индексов ({len(etalon_indices)}) не совпадает с количеством контрольных ({len(control_indices_group)})")
+                        continue
+                    
+                    # Создаем словарь сопоставления
+                    index_mapping = {}
+                    for i, etalon_idx in enumerate(etalon_indices):
+                        if i < len(control_indices_group):
+                            etalon_key = tuple(etalon_idx)
+                            control_key = tuple(control_indices_group[i])
+                            index_mapping[control_key] = etalon_key
+                    
+                    # Итерируемся по контрольным изображениям из этой группы и создаем коллажи
+                    for control_idx in control_indices_group:
+                        col, row = control_idx
+                        
+                        # Проверяем наличие контрольного изображения
+                        if (col, row) not in control_images_dict:
+                            print(f"Предупреждение: контрольное изображение для ({col}, {row}) не найдено")
+                            continue
+                        
+                        control_image = control_images_dict[(col, row)]
+                        
+                        # Находим соответствующий эталонный индекс
+                        if (col, row) not in index_mapping:
+                            print(f"Предупреждение: нет сопоставления для контрольного изображения ({col}, {row})")
+                            continue
+                        
+                        etalon_col, etalon_row = index_mapping[(col, row)]
+                        
+                        # Проверяем наличие эталонного изображения
+                        if (etalon_col, etalon_row) not in etalon_images_dict:
+                            print(f"Предупреждение: эталонное изображение для ({etalon_col}, {etalon_row}) не найдено")
+                            continue
+                        
+                        etalon_image = etalon_images_dict[(etalon_col, etalon_row)]
+                        
+                        # Формируем ключ для поиска bboxes (используем эталонный индекс)
+                        photo_key = f"photo_{etalon_col}_{etalon_row}"
+                        
+                        # Получаем bboxes для эталонного изображения
+                        if photo_key not in bboxes_data:
+                            print(f"Предупреждение: bboxes для {photo_key} не найдены")
+                            continue
+                        
+                        bboxes = bboxes_data[photo_key]
+                        
+                        if not bboxes:
+                            print(f"Предупреждение: нет bboxes для {photo_key}")
+                            continue
+                        
+                        # Создаем коллаж с кропами компонентов
+                        saved_count += create_component_collage(
+                            etalon_image, control_image, bboxes, col, row, 
+                            data_folder, photo_key
+                        )
             
             if saved_count > 0:
-                print(f"Успешно сохранено {saved_count} из {len(self.images_data)} изображений в папку {data_folder}")
+                print(f"Успешно сохранено {saved_count} коллажей в папку {data_folder}")
                 QMessageBox.information(
                     self,
                     "Инспекция завершена",
-                    f"Сохранено {saved_count} изображений в папку data"
+                    f"Сохранено {saved_count} коллажей в папку data"
                 )
             else:
-                self.show_error("Не удалось сохранить ни одного изображения")
+                self.show_error("Не удалось сохранить ни одного коллажа")
                 
         except Exception as e:
-            self.show_error(f"Ошибка при сохранении изображений: {str(e)}")
+            self.show_error(f"Ошибка при создании коллажей: {str(e)}")
             import traceback
             traceback.print_exc()
-
+    
     # === Camera and CNC logic (unchanged) ===
 
     def clear_image_display(self):
