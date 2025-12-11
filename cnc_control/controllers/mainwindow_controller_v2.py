@@ -14,7 +14,15 @@ from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea
+    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea,
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
+)
+
+import re
+from PyQt6.QtWidgets import (
+    QMainWindow, QApplication, QLabel, QListWidget,
+    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog,
+    QScrollArea, QGridLayout
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
@@ -67,6 +75,9 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_images = []  # Список загруженных эталонных изображений (numpy arrays)
         self.etalon_image_names = []  # Список имен файлов изображений
         self.current_etalon_index = -1  # Индекс текущего изображения (-1 если нет изображений)
+        
+        # Control images data
+        self.images_data = []  # [(row, col, file_path, image), ...] - данные контрольных изображений
         
         # Reference to marking window to prevent garbage collection
         self.marking_window = None
@@ -125,6 +136,10 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
         self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
         self.ui.mark_image_button.clicked.connect(self.open_mark_image_window)
+        
+        # Inspection buttons
+        self.ui.load_control_photo_pushButton.clicked.connect(self.load_control_photo)
+        self.ui.run_inspection_pushButton.clicked.connect(self.run_inspection)
 
     # === Coordinate list functionality ===
 
@@ -474,6 +489,179 @@ class MainWindowControllerV2(QMainWindow):
             self.marking_window.activateWindow()  # Активируем окно
         except Exception as e:
             self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
+
+    # === Inspection handlers ===
+    
+    def load_control_photo(self):
+        """Обработчик нажатия на кнопку 'Загрузить контрольное изображение'."""
+        # Открываем диалог выбора папки
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку с изображениями",
+            ""
+        )
+        
+        if not folder_path:
+            return
+        
+        try:
+            # Получаем все изображения из папки
+            image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif'}
+            image_files = []
+            
+            for file_name in Path(folder_path).iterdir():
+                if file_name.suffix.lower() in image_extensions:
+                    image_files.append(file_name)
+            
+            if not image_files:
+                self.show_error("В выбранной папке не найдено изображений")
+                return
+            
+            # Парсим имена файлов для извлечения координат
+            # Формат: photo_X_Y.png, где X - столбец (горизонталь), Y - строка (вертикаль)
+            self.images_data = []  # [(row, col, file_path, image), ...]
+            
+            for file_path in image_files:
+                # Извлекаем имя файла без расширения
+                stem = file_path.stem
+                
+                # Ищем паттерн _число_число в конце имени
+                # Формат: photo_X_Y, где X - столбец, Y - строка
+                match = re.search(r'_(\d+)_(\d+)$', stem)
+                if match:
+                    col = int(match.group(1))  # X - столбец (горизонталь)
+                    row = int(match.group(2))   # Y - строка (вертикаль)
+                    
+                    # Загружаем изображение
+                    image = cv2.imread(str(file_path))
+                    if image is not None:
+                        self.images_data.append((row, col, file_path, image))
+                else:
+                    # Если паттерн не найден, пропускаем файл
+                    print(f"Предупреждение: не удалось определить координаты для файла {file_path.name}")
+            
+            if not self.images_data:
+                self.show_error("Не удалось загрузить изображения или определить их координаты")
+                return
+            
+            # Сортируем по координатам (сначала по row, потом по col)
+            self.images_data.sort(key=lambda x: (x[0], x[1]))
+            
+            # Определяем размеры сетки
+            max_row = max(img[0] for img in self.images_data)  # Максимальная строка (Y)
+            max_col = max(img[1] for img in self.images_data)  # Максимальный столбец (X)
+            
+            # Очищаем виджет и создаем новый layout
+            photo_widget = self.ui.photo_display_widget
+            # Удаляем старый layout, если он есть
+            old_layout = photo_widget.layout()
+            if old_layout:
+                # Удаляем все виджеты из старого layout
+                while old_layout.count():
+                    child = old_layout.takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+            
+            # Создаем scroll area для прокрутки, если изображений много
+            scroll_area = QScrollArea(photo_widget)
+            scroll_area.setWidgetResizable(True)
+            scroll_widget = QWidget()
+            grid_layout_widget = QGridLayout(scroll_widget)
+            grid_layout_widget.setSpacing(5)
+            
+            # Добавляем изображения в сетку
+            # Нумерация: снизу вверх, слева направо
+            # В QGridLayout строка 0 - это верх, поэтому инвертируем row
+            for row, col, file_path, image in self.images_data:
+                # Конвертируем BGR в RGB для Qt
+                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(qt_image)
+                
+                # Масштабируем изображение для отображения в мозаике
+                # Размер каждой ячейки примерно 200x200 пикселей
+                cell_size = 200
+                scaled_pixmap = pixmap.scaled(
+                    cell_size, cell_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                
+                # Создаем QLabel для отображения изображения
+                label = QLabel()
+                label.setPixmap(scaled_pixmap)
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setStyleSheet("border: 1px solid gray;")
+                
+                # Добавляем в сетку: инвертируем row для отображения снизу вверх
+                # row=0 (низ) должен быть в позиции max_row, row=max_row (верх) должен быть в позиции 0
+                grid_row = max_row - row
+                grid_layout_widget.addWidget(label, grid_row, col)
+            
+            scroll_area.setWidget(scroll_widget)
+            
+            # Создаем новый layout для photo_widget
+            main_layout = QVBoxLayout(photo_widget)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.addWidget(scroll_area)
+            photo_widget.setLayout(main_layout)
+            
+            print(f"Загружено {len(self.images_data)} изображений в сетку {max_row + 1}x{max_col + 1}")
+            
+        except Exception as e:
+            self.show_error(f"Ошибка при загрузке изображений: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def run_inspection(self):
+        """Обработчик нажатия на кнопку 'Запустить инспекцию'."""
+        if not self.images_data:
+            self.show_error("Нет загруженных изображений. Сначала загрузите контрольные изображения.")
+            return
+        
+        try:
+            # Определяем путь к папке data (в корне проекта)
+            project_root = Path(__file__).parent.parent.parent
+            data_folder = project_root / "data"
+            
+            # Создаем папку data, если её нет
+            data_folder.mkdir(exist_ok=True)
+            
+            # Итерируемся по images_data и сохраняем изображения
+            saved_count = 0
+            for row, col, file_path, image in self.images_data:
+                # Получаем расширение исходного файла
+                original_extension = file_path.suffix
+                
+                # Формируем новое имя файла с префиксом tmp
+                # Формат: tmp_photo_X_Y.png
+                new_filename = f"tmp_photo_{col}_{row}{original_extension}"
+                new_file_path = data_folder / new_filename
+                
+                # Сохраняем изображение
+                success = cv2.imwrite(str(new_file_path), image)
+                if success:
+                    saved_count += 1
+                    print(f"Сохранено: {new_filename}")
+                else:
+                    print(f"Ошибка при сохранении: {new_filename}")
+            
+            if saved_count > 0:
+                print(f"Успешно сохранено {saved_count} из {len(self.images_data)} изображений в папку {data_folder}")
+                QMessageBox.information(
+                    self,
+                    "Инспекция завершена",
+                    f"Сохранено {saved_count} изображений в папку data"
+                )
+            else:
+                self.show_error("Не удалось сохранить ни одного изображения")
+                
+        except Exception as e:
+            self.show_error(f"Ошибка при сохранении изображений: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     # === Camera and CNC logic (unchanged) ===
 
@@ -1286,6 +1474,7 @@ class ImageMarkingWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window)
         self.setWindowTitle("Разметка изображения")
         self.setMinimumSize(800, 600)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         # Сохраняем имя изображения
         self.image_name = image_name if image_name is not None else "unknown"
@@ -1764,6 +1953,13 @@ class ImageMarkingWindow(QWidget):
         if hasattr(self, 'main_window_ref'):
             self.main_window_ref.marking_window = None
         event.accept()
+
+    def keyPressEvent(self, event):
+        """Enter/Return — переименование выбранного бокса."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.image_widget.rename_selected_bbox(self)
+            return
+        super().keyPressEvent(event)
 
 
 # Optional: Run standalone for testing
