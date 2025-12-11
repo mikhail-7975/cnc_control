@@ -1168,6 +1168,27 @@ class ImageDisplayWidget(QWidget):
                     self.marking_window.update_bbox_list()
         else:
             super().keyPressEvent(event)
+    
+    def wheelEvent(self, event):
+        """Обработка прокрутки колесика мыши для масштабирования с Ctrl."""
+        # Проверяем, нажат ли Ctrl
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Получаем направление прокрутки
+            delta = event.angleDelta().y()
+            
+            # Если есть ссылка на окно разметки, вызываем методы масштабирования
+            if hasattr(self, 'marking_window') and self.marking_window:
+                if delta > 0:
+                    # Прокрутка вверх - увеличение
+                    self.marking_window.zoom_in()
+                elif delta < 0:
+                    # Прокрутка вниз - уменьшение
+                    self.marking_window.zoom_out()
+                event.accept()
+                return
+        
+        # Если Ctrl не нажат, передаем событие дальше
+        super().wheelEvent(event)
 
 
 class ImageMarkingWindow(QWidget):
