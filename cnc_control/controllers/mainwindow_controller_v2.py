@@ -9,15 +9,17 @@ MainWindow Controller V2
 import sys
 import cv2
 import time
+import json
+from pathlib import Path
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
-    QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox
+    QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea
 )
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
+import math
 # Try to import UI v2 - adjust class name if needed
-import sys
-from pathlib import Path
 # Add project root to path for UI imports
 # project_root = Path(__file__).parent.parent.parent
 # if str(project_root) not in sys.path:
@@ -47,8 +49,7 @@ class MainWindowControllerV2(QMainWindow):
 
         # Camera variables
         self.cam = None
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_frame)
+        self.timer = QTimer(self)
 
         # image_label
         self.image_label = QLabel(self.ui.image_displayer)
@@ -64,7 +65,11 @@ class MainWindowControllerV2(QMainWindow):
 
         # Etalon images variables
         self.etalon_images = []  # Список загруженных эталонных изображений (numpy arrays)
+        self.etalon_image_names = []  # Список имен файлов изображений
         self.current_etalon_index = -1  # Индекс текущего изображения (-1 если нет изображений)
+        
+        # Reference to marking window to prevent garbage collection
+        self.marking_window = None
         
         # Etalon image display label
         self.etalon_image_label = QLabel(self.ui.display_etalon_image_widget)
@@ -79,6 +84,7 @@ class MainWindowControllerV2(QMainWindow):
     def setup_connections(self):
         # Camera
         self.ui.connect_camera_button.clicked.connect(self.toggle_camera)
+        self.timer.timeout.connect(self.update_frame)
 
         # Joystick buttons (X-axis)
         self.ui.left_1_button.clicked.connect(lambda: self.move_axis('X', -1))
@@ -118,6 +124,7 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.load_etalon_images_button.clicked.connect(self.load_etalon_images)
         self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
         self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
+        self.ui.mark_image_button.clicked.connect(self.open_mark_image_window)
 
     # === Coordinate list functionality ===
 
@@ -340,6 +347,7 @@ class MainWindowControllerV2(QMainWindow):
         
         try:
             loaded_images = []
+            loaded_names = []
             for file_path in file_paths:
                 # Загружаем изображение с помощью OpenCV
                 image = cv2.imread(file_path)
@@ -347,9 +355,13 @@ class MainWindowControllerV2(QMainWindow):
                     print(f"Предупреждение: не удалось загрузить изображение {file_path}")
                     continue
                 loaded_images.append(image)
+                # Извлекаем имя файла без расширения
+                file_name = Path(file_path).stem
+                loaded_names.append(file_name)
             
             if loaded_images:
                 self.etalon_images = loaded_images
+                self.etalon_image_names = loaded_names
                 self.current_etalon_index = 0
                 self.display_current_etalon_image()
                 print(f"Загружено {len(self.etalon_images)} эталонных изображений")
@@ -425,6 +437,44 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_image_label.move(0, 0)
         self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
 
+    def open_mark_image_window(self):
+        """Открыть новое окно для разметки изображения."""
+        if not self.etalon_images or self.current_etalon_index < 0:
+            self.show_error("Нет изображения для разметки. Загрузите эталонные изображения.")
+            return
+        
+        try:
+            # Получаем текущее изображение
+            current_image = self.etalon_images[self.current_etalon_index]
+            
+            # Если окно уже открыто, просто активируем его
+            if self.marking_window is not None and self.marking_window.isVisible():
+                self.marking_window.raise_()
+                self.marking_window.activateWindow()
+                return
+            
+            # Получаем имя изображения
+            if self.current_etalon_index < len(self.etalon_image_names):
+                image_name = self.etalon_image_names[self.current_etalon_index]
+            else:
+                # Fallback на номер, если имя недоступно
+                image_name = f"image_{self.current_etalon_index + 1}"
+            
+            # Создаем и показываем новое окно как отдельное окно (не дочернее)
+            self.marking_window = ImageMarkingWindow(current_image, image_name=image_name, parent=None)
+            # Сохраняем ссылку на главное окно в окне разметки для очистки при закрытии
+            self.marking_window.main_window_ref = self
+            
+            # Устанавливаем размер окна такой же, как у главного окна
+            main_window_size = self.size()
+            self.marking_window.resize(main_window_size)
+            
+            self.marking_window.show()
+            self.marking_window.raise_()  # Поднимаем окно на передний план
+            self.marking_window.activateWindow()  # Активируем окно
+        except Exception as e:
+            self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
+
     # === Camera and CNC logic (unchanged) ===
 
     def clear_image_display(self):
@@ -489,6 +539,7 @@ class MainWindowControllerV2(QMainWindow):
             self.clear_image_display()
 
     def resizeEvent(self, event):
+        """Обработка изменения размера главного окна."""
         if self.image_label is not None:
             self.image_label.resize(self.ui.image_displayer.size())
         if self.etalon_image_label is not None:
@@ -577,6 +628,1141 @@ class MainWindowControllerV2(QMainWindow):
             self.driver.move_x(0)
             self.driver.move_y(0)
             self.driver.close_serial_port()
+        event.accept()
+
+
+class ImageDisplayWidget(QWidget):
+    """Виджет для отображения изображения с возможностью разметки."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Enable keyboard focus
+        self.original_image = None
+        self.display_pixmap = None
+        self.bounding_boxes = []  # Список bounding boxes: [x1, y1, x2, y2, angle, selected, name]
+        self.current_box_start = None  # Начальная точка текущего бокса
+        self.drawing_box = False
+        self.selected_box_index = None
+        self.rotation_mode = False
+        self.rotation_start_angle = 0
+        self.image_offset = QPoint(0, 0)
+        self.pan_offset = QPoint(0, 0)  # Смещение для панорамирования
+        self.last_mouse_pos = QPoint(0, 0)
+        self.dragging_box = False
+        self.panning = False  # Флаг панорамирования мышью
+        self.pan_start_pos = QPoint(0, 0)  # Начальная позиция мыши при панорамировании
+        self.drag_type = None  # 'corner', 'edge', 'move', or None
+        self.drag_corner_index = None  # 0-3 for corners
+        self.drag_start_pos = None
+        self.drag_start_box = None  # Original box coordinates when drag started
+        self.rotation_base_angle = 0.0
+        self.rotation_start_pointer_angle = 0.0
+        
+    def set_image(self, pixmap):
+        """Установить изображение для отображения."""
+        self.original_image = pixmap
+        self.display_pixmap = pixmap
+        self.update()
+    
+    def get_box_corners(self, box):
+        """Получить координаты углов бокса с учетом поворота."""
+        x1, y1, x2, y2, angle, _, _ = box
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        width = abs(x2 - x1)
+        height = abs(y2 - y1)
+        
+        # Углы без поворота
+        corners = [
+            (x1, y1),  # top-left
+            (x2, y1),  # top-right
+            (x2, y2),  # bottom-right
+            (x1, y2)   # bottom-left
+        ]
+        
+        # Применяем поворот
+        angle_rad = math.radians(angle)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        
+        rotated_corners = []
+        for cx, cy in corners:
+            # Переводим в систему координат с центром в центре бокса
+            dx = cx - center_x
+            dy = cy - center_y
+            # Поворачиваем
+            rx = dx * cos_a - dy * sin_a
+            ry = dx * sin_a + dy * cos_a
+            # Возвращаем в исходную систему координат
+            rotated_corners.append((rx + center_x, ry + center_y))
+        
+        return rotated_corners
+    
+    def get_rotation_handle(self, box, offset=20):
+        """Возвращает точку для ручки вращения (над верхним ребром)."""
+        corners = self.get_box_corners(box)
+        top_mid_x = (corners[0][0] + corners[1][0]) / 2
+        top_mid_y = (corners[0][1] + corners[1][1]) / 2
+        # Направление внешней нормали к верхнему ребру
+        edge_vec_x = corners[1][0] - corners[0][0]
+        edge_vec_y = corners[1][1] - corners[0][1]
+        edge_len = math.sqrt(edge_vec_x ** 2 + edge_vec_y ** 2) or 1.0
+        normal_x = -edge_vec_y / edge_len
+        normal_y = edge_vec_x / edge_len
+        handle_x = top_mid_x + normal_x * offset
+        handle_y = top_mid_y + normal_y * offset
+        return QPoint(int(handle_x), int(handle_y))
+    
+    def detect_box_interaction(self, pos, box):
+        """Определить тип взаимодействия с боксом: угол, край, центр или ручка вращения."""
+        x1, y1, x2, y2, angle, _, _ = box
+        corners = self.get_box_corners(box)
+        
+        # Проверяем попадание в углы (радиус 10 пикселей)
+        corner_radius = 10
+        for i, (cx, cy) in enumerate(corners):
+            dist = math.sqrt((pos.x() - cx)**2 + (pos.y() - cy)**2)
+            if dist < corner_radius:
+                return 'corner', i
+        
+        # Проверяем попадание на края
+        edge_threshold = 5
+        for i in range(4):
+            p1 = corners[i]
+            p2 = corners[(i + 1) % 4]
+            
+            # Расстояние от точки до отрезка
+            A = pos.x() - p1[0]
+            B = pos.y() - p1[1]
+            C = p2[0] - p1[0]
+            D = p2[1] - p1[1]
+            
+            dot = A * C + B * D
+            len_sq = C * C + D * D
+            if len_sq > 0:
+                param = dot / len_sq
+                
+                if 0 <= param <= 1:
+                    xx = p1[0] + param * C
+                    yy = p1[1] + param * D
+                    dist = math.sqrt((pos.x() - xx)**2 + (pos.y() - yy)**2)
+                    if dist < edge_threshold:
+                        return 'edge', i
+        
+        # Проверяем попадание в центр (простая проверка прямоугольника)
+        if min(x1, x2) <= pos.x() <= max(x1, x2) and min(y1, y2) <= pos.y() <= max(y1, y2):
+            return 'move', None
+        
+        return None, None
+    
+    def paintEvent(self, event):
+        """Отрисовка изображения и bounding boxes."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Рисуем изображение
+        if self.display_pixmap:
+            # Центрируем изображение и применяем смещение панорамирования
+            pixmap_rect = self.display_pixmap.rect()
+            widget_rect = self.rect()
+            x = (widget_rect.width() - pixmap_rect.width()) // 2 + self.pan_offset.x()
+            y = (widget_rect.height() - pixmap_rect.height()) // 2 + self.pan_offset.y()
+            painter.drawPixmap(x, y, self.display_pixmap)
+            self.image_offset = QPoint(x, y)
+        else:
+            self.image_offset = QPoint(0, 0)
+        
+        # Рисуем bounding boxes
+        for i, box in enumerate(self.bounding_boxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            is_selected = (i == self.selected_box_index)
+            
+            # Преобразуем координаты с учетом смещения изображения
+            p1 = QPoint(int(x1) + self.image_offset.x(), int(y1) + self.image_offset.y())
+            p2 = QPoint(int(x2) + self.image_offset.x(), int(y2) + self.image_offset.y())
+            
+            # Вычисляем центр и углы прямоугольника
+            center_x = (p1.x() + p2.x()) / 2
+            center_y = (p1.y() + p2.y()) / 2
+            center = QPoint(int(center_x), int(center_y))
+            
+            width = abs(p2.x() - p1.x())
+            height = abs(p2.y() - p1.y())
+            
+            # Создаем прямоугольник
+            rect = QRectF(p1.x(), p1.y(), width, height)
+            rect = rect.normalized()
+            
+            # Применяем поворот
+            painter.save()
+            painter.translate(center)
+            painter.rotate(angle)
+            painter.translate(-center)
+            
+            # Рисуем прямоугольник
+            pen = QPen(QColor(0, 255, 0) if is_selected else QColor(255, 0, 0), 2)
+            painter.setPen(pen)
+            painter.drawRect(rect)
+            
+            # Рисуем углы
+            corner_size = 8
+            corners = [
+                QRectF(rect.left() - corner_size/2, rect.top() - corner_size/2, corner_size, corner_size),
+                QRectF(rect.right() - corner_size/2, rect.top() - corner_size/2, corner_size, corner_size),
+                QRectF(rect.right() - corner_size/2, rect.bottom() - corner_size/2, corner_size, corner_size),
+                QRectF(rect.left() - corner_size/2, rect.bottom() - corner_size/2, corner_size, corner_size)
+            ]
+            for corner in corners:
+                painter.fillRect(corner, pen.color())
+            
+            painter.restore()
+            
+            # Рисуем имя бокса над верхним левым углом
+            if name:
+                painter.save()
+                # Получаем координаты верхнего левого угла с учетом поворота
+                corners = self.get_box_corners(box)
+                top_left = corners[0]
+                text_x = int(top_left[0]) + self.image_offset.x()
+                text_y = int(top_left[1]) + self.image_offset.y() - 5
+                
+                # Рисуем фон для текста для лучшей читаемости
+                font = QFont("Arial", 10)
+                painter.setFont(font)
+                font_metrics = painter.fontMetrics()
+                text_rect = font_metrics.boundingRect(name)
+                bg_rect = QRectF(text_x - 2, text_y - text_rect.height() - 2, 
+                                 text_rect.width() + 4, text_rect.height() + 4)
+                painter.fillRect(bg_rect, QColor(0, 0, 0, 180))  # Полупрозрачный черный фон
+                
+                # Рисуем текст
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(text_x, text_y, name)
+                painter.restore()
+            
+            # Рисуем текущий бокс при создании
+            if self.drawing_box and self.current_box_start:
+                temp_rect = QRectF(
+                    min(self.current_box_start.x(), self.last_mouse_pos.x()) + self.image_offset.x(),
+                    min(self.current_box_start.y(), self.last_mouse_pos.y()) + self.image_offset.y(),
+                    abs(self.last_mouse_pos.x() - self.current_box_start.x()),
+                    abs(self.last_mouse_pos.y() - self.current_box_start.y())
+                )
+                pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
+                painter.setPen(pen)
+                painter.drawRect(temp_rect)
+    
+    def mousePressEvent(self, event):
+        """Обработка нажатия мыши."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Преобразуем координаты относительно изображения
+            widget_pos = event.position().toPoint()
+            pos = widget_pos - self.image_offset
+            
+            # Проверяем, что клик внутри изображения
+            if not self.display_pixmap:
+                return
+            
+            pixmap_rect = self.display_pixmap.rect()
+            if not (0 <= pos.x() < pixmap_rect.width() and 0 <= pos.y() < pixmap_rect.height()):
+                return
+            
+            if self.rotation_mode and self.selected_box_index is not None:
+                # Режим поворота
+                box = self.bounding_boxes[self.selected_box_index]
+                x1, y1, x2, y2, angle, _, _ = box
+                center_x = (x1 + x2) / 2
+                center_y = (y1 + y2) / 2
+                dx = pos.x() - center_x
+                dy = pos.y() - center_y
+                pointer_angle = math.degrees(math.atan2(dy, dx))
+                self.rotation_base_angle = angle
+                self.rotation_start_pointer_angle = pointer_angle
+            else:
+                # Проверяем, кликнули ли по существующему боксу
+                clicked_box = None
+                interaction_type = None
+                interaction_index = None
+                
+                # Проверяем боксы в обратном порядке (сначала верхние)
+                for i in range(len(self.bounding_boxes) - 1, -1, -1):
+                    box = self.bounding_boxes[i]
+                    interaction_type, interaction_index = self.detect_box_interaction(pos, box)
+                    if interaction_type is not None:
+                        clicked_box = i
+                        break
+                
+                if clicked_box is not None:
+                    self.selected_box_index = clicked_box
+                    # Обновляем флаг выбранности
+                    for i, box in enumerate(self.bounding_boxes):
+                        x1, y1, x2, y2, angle, _, name = box
+                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box, name)
+                    
+                    # Обновляем список bboxes в окне разметки
+                    if hasattr(self, 'marking_window') and self.marking_window:
+                        self.marking_window.update_bbox_list()
+                    
+                    # Начинаем перетаскивание
+                    self.dragging_box = True
+                    self.drag_type = interaction_type
+                    self.drag_corner_index = interaction_index
+                    self.drag_start_pos = pos
+                    self.drag_start_box = self.bounding_boxes[clicked_box]
+                    self.update()
+                else:
+                    # Начинаем создание нового бокса
+                    self.current_box_start = pos
+                    self.drawing_box = True
+                    self.selected_box_index = None
+                    self.dragging_box = False
+        
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Правый клик - режим поворота
+            if self.selected_box_index is not None:
+                self.rotation_mode = True
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Средняя кнопка мыши - начало панорамирования
+            if not self.dragging_box and not self.drawing_box:
+                self.panning = True
+                self.pan_start_pos = event.position().toPoint()
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+    
+    def mouseMoveEvent(self, event):
+        """Обработка движения мыши."""
+        widget_pos = event.position().toPoint()
+        self.last_mouse_pos = widget_pos - self.image_offset
+        
+        # Обновляем курсор в зависимости от позиции
+        if not self.dragging_box and not self.drawing_box and not self.rotation_mode:
+            pos = widget_pos - self.image_offset
+            cursor_set = False
+            
+            # Проверяем все боксы для определения типа курсора
+            for i, box in enumerate(self.bounding_boxes):
+                interaction_type, interaction_index = self.detect_box_interaction(pos, box)
+                if interaction_type == 'corner':
+                    self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+                    cursor_set = True
+                    break
+                elif interaction_type == 'edge':
+                    # Определяем направление края для правильного курсора
+                    # Вычисляем фактическое направление края (с учетом поворота)
+                    corners = self.get_box_corners(box)
+                    edge_idx = interaction_index
+                    p1 = corners[edge_idx]
+                    p2 = corners[(edge_idx + 1) % 4]
+                    
+                    # Вычисляем угол края
+                    edge_dx = p2[0] - p1[0]
+                    edge_dy = p2[1] - p1[1]
+                    edge_angle = math.degrees(math.atan2(abs(edge_dy), abs(edge_dx)))
+                    
+                    # Если угол больше 45 градусов, край более вертикальный
+                    # Если угол меньше 45 градусов, край более горизонтальный
+                    if edge_angle > 45:
+                        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+                    else:
+                        self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
+                    cursor_set = True
+                    break
+                elif interaction_type == 'move':
+                    self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+                    cursor_set = True
+                    break
+            
+            if not cursor_set:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        
+        if self.rotation_mode and self.selected_box_index is not None:
+            # Поворот выбранного бокса
+            box = self.bounding_boxes[self.selected_box_index]
+            x1, y1, x2, y2, angle, _, name = box
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            dx = self.last_mouse_pos.x() - center_x
+            dy = self.last_mouse_pos.y() - center_y
+            pointer_angle = math.degrees(math.atan2(dy, dx))
+            new_angle = self.rotation_base_angle + (pointer_angle - self.rotation_start_pointer_angle)
+            self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, new_angle, True, name)
+            self.update()
+        elif self.dragging_box and self.selected_box_index is not None:
+            # Перетаскивание бокса
+            box = self.bounding_boxes[self.selected_box_index]
+            x1, y1, x2, y2, angle, _, name = box
+            dx = self.last_mouse_pos.x() - self.drag_start_pos.x()
+            dy = self.last_mouse_pos.y() - self.drag_start_pos.y()
+            
+            if self.drag_type == 'move':
+                # Перемещение всего бокса (сохраняя размер и угол)
+                start_x1, start_y1, start_x2, start_y2, start_angle, _, start_name = self.drag_start_box
+                width = start_x2 - start_x1
+                height = start_y2 - start_y1
+                new_x1 = start_x1 + dx
+                new_y1 = start_y1 + dy
+                new_x2 = new_x1 + width
+                new_y2 = new_y1 + height
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
+            elif self.drag_type == 'corner':
+                # Изменение размера через угол
+                corners = self.get_box_corners(self.drag_start_box)
+                corner = corners[self.drag_corner_index]
+                
+                # Новые координаты угла
+                new_corner_x = corner[0] + dx
+                new_corner_y = corner[1] + dy
+                
+                # Находим противоположный угол
+                opposite_index = (self.drag_corner_index + 2) % 4
+                opposite_corner = corners[opposite_index]
+                
+                # Обновляем координаты бокса
+                new_x1 = min(new_corner_x, opposite_corner[0])
+                new_y1 = min(new_corner_y, opposite_corner[1])
+                new_x2 = max(new_corner_x, opposite_corner[0])
+                new_y2 = max(new_corner_y, opposite_corner[1])
+                
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
+            elif self.drag_type == 'edge':
+                # Изменение размера через край
+                edge = self.drag_corner_index
+                
+                # Работаем в системе координат бокса (до поворота)
+                orig_x1, orig_y1, orig_x2, orig_y2, orig_angle, _, orig_name = self.drag_start_box
+                center_x = (orig_x1 + orig_x2) / 2
+                center_y = (orig_y1 + orig_y2) / 2
+                width = abs(orig_x2 - orig_x1)
+                height = abs(orig_y2 - orig_y1)
+                
+                # Преобразуем текущую позицию мыши в систему координат бокса
+                # (поворачиваем обратно на -angle)
+                angle_rad = -math.radians(angle)
+                cos_a = math.cos(angle_rad)
+                sin_a = math.sin(angle_rad)
+                
+                # Смещение мыши относительно центра
+                rel_x = self.last_mouse_pos.x() - center_x
+                rel_y = self.last_mouse_pos.y() - center_y
+                
+                # Поворачиваем в систему координат бокса
+                rotated_dx = rel_x * cos_a - rel_y * sin_a
+                rotated_dy = rel_x * sin_a + rel_y * cos_a
+                
+                # Начальное смещение в системе координат бокса
+                start_rel_x = self.drag_start_pos.x() - center_x
+                start_rel_y = self.drag_start_pos.y() - center_y
+                start_rotated_dx = start_rel_x * cos_a - start_rel_y * sin_a
+                start_rotated_dy = start_rel_x * sin_a + start_rel_y * cos_a
+                
+                # Изменение в системе координат бокса
+                delta_rotated_x = rotated_dx - start_rotated_dx
+                delta_rotated_y = rotated_dy - start_rotated_dy
+                
+                # Определяем, какой размер изменяется в зависимости от края
+                # edge 0: верхний край (y1 изменяется)
+                # edge 1: правый край (x2 изменяется)
+                # edge 2: нижний край (y2 изменяется)
+                # edge 3: левый край (x1 изменяется)
+                
+                new_x1, new_y1, new_x2, new_y2 = orig_x1, orig_y1, orig_x2, orig_y2
+                
+                if edge == 0:  # Верхний край - изменяем y1
+                    new_y1 = orig_y1 + delta_rotated_y
+                elif edge == 1:  # Правый край - изменяем x2
+                    new_x2 = orig_x2 + delta_rotated_x
+                elif edge == 2:  # Нижний край - изменяем y2
+                    new_y2 = orig_y2 + delta_rotated_y
+                elif edge == 3:  # Левый край - изменяем x1
+                    new_x1 = orig_x1 + delta_rotated_x
+                
+                # Убеждаемся, что размеры не стали отрицательными
+                if abs(new_x2 - new_x1) < 5:
+                    if edge == 1:
+                        new_x2 = new_x1 + 5
+                    elif edge == 3:
+                        new_x1 = new_x2 - 5
+                
+                if abs(new_y2 - new_y1) < 5:
+                    if edge == 2:
+                        new_y2 = new_y1 + 5
+                    elif edge == 0:
+                        new_y1 = new_y2 - 5
+                
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
+            
+            self.update()
+        elif self.drawing_box:
+            self.update()
+        elif self.panning:
+            # Панорамирование изображения
+            current_pos = event.position().toPoint()
+            dx = current_pos.x() - self.pan_start_pos.x()
+            dy = current_pos.y() - self.pan_start_pos.y()
+            self.pan_offset.setX(self.pan_offset.x() + dx)
+            self.pan_offset.setY(self.pan_offset.y() + dy)
+            self.pan_start_pos = current_pos
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
+    
+    def mouseReleaseEvent(self, event):
+        """Обработка отпускания мыши."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.drawing_box and self.current_box_start:
+                # Завершаем создание бокса
+                widget_pos = event.position().toPoint()
+                end_pos = widget_pos - self.image_offset
+                x1, y1 = self.current_box_start.x(), self.current_box_start.y()
+                x2, y2 = end_pos.x(), end_pos.y()
+                
+                # Проверяем, что бокс имеет ненулевой размер
+                if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
+                    # Добавляем новый бокс (начало, конец, угол=0, выбран, имя="")
+                    self.bounding_boxes.append((x1, y1, x2, y2, 0.0, True, ""))
+                    # Снимаем выделение с других боксов
+                    for i in range(len(self.bounding_boxes) - 1):
+                        box = self.bounding_boxes[i]
+                        self.bounding_boxes[i] = (box[0], box[1], box[2], box[3], box[4], False, box[6])
+                    self.selected_box_index = len(self.bounding_boxes) - 1
+                    
+                    # Обновляем список bboxes в окне разметки
+                    if hasattr(self, 'marking_window') and self.marking_window:
+                        self.marking_window.update_bbox_list()
+                    
+                    # Автоматически показываем диалог для ввода имени нового бокса
+                    self._show_name_dialog_for_selected_box()
+                
+                self.drawing_box = False
+                self.current_box_start = None
+                self.update()
+            
+            # Завершаем перетаскивание
+            if self.dragging_box:
+                self.dragging_box = False
+                self.drag_type = None
+                self.drag_corner_index = None
+                self.drag_start_pos = None
+                self.drag_start_box = None
+            
+            self.rotation_mode = False
+        
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.rotation_mode = False
+            if self.dragging_box:
+                self.dragging_box = False
+                self.drag_type = None
+                self.drag_corner_index = None
+                self.drag_start_pos = None
+                self.drag_start_box = None
+        
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Завершение панорамирования
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Завершение панорамирования
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+    
+    def _show_name_dialog_for_selected_box(self):
+        """Показать диалог для ввода имени выбранного бокса."""
+        if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
+            box = self.bounding_boxes[self.selected_box_index]
+            x1, y1, x2, y2, angle, selected, current_name = box
+            
+            # Открываем диалог для ввода имени
+            text, ok = QInputDialog.getText(
+                self,
+                "Имя bounding box",
+                "Введите имя для bounding box:",
+                text=current_name if current_name else ""
+            )
+            
+            if ok and text:
+                # Обновляем имя бокса
+                self.bounding_boxes[self.selected_box_index] = (x1, y1, x2, y2, angle, selected, text)
+                self.update()
+                # Обновляем список bboxes в окне разметки
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_bbox_list()
+    
+    def keyPressEvent(self, event):
+        """Обработка нажатия клавиш."""
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            # Если нажат Enter и есть выбранный бокс, открываем диалог для ввода имени
+            if self.selected_box_index is not None:
+                self._show_name_dialog_for_selected_box()
+        elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+            # Если нажат Delete/Backspace и есть выбранный бокс, удаляем его
+            if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
+                # Удаляем выбранный бокс
+                del self.bounding_boxes[self.selected_box_index]
+                # Сбрасываем выделение
+                self.selected_box_index = None
+                # Обновляем отображение
+                self.update()
+                # Обновляем список bboxes в окне разметки
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_bbox_list()
+        elif event.key() == Qt.Key.Key_Left:
+            # Стрелка влево - панорамирование влево
+            self.pan_offset.setX(self.pan_offset.x() + 20)
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
+        elif event.key() == Qt.Key.Key_Right:
+            # Стрелка вправо - панорамирование вправо
+            self.pan_offset.setX(self.pan_offset.x() - 20)
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
+        elif event.key() == Qt.Key.Key_Up:
+            # Стрелка вверх - панорамирование вверх
+            self.pan_offset.setY(self.pan_offset.y() + 20)
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
+        elif event.key() == Qt.Key.Key_Down:
+            # Стрелка вниз - панорамирование вниз
+            self.pan_offset.setY(self.pan_offset.y() - 20)
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
+        elif event.key() == Qt.Key.Key_Space:
+            # Пробел - начало панорамирования мышью
+            if not self.dragging_box and not self.drawing_box:
+                self.panning = True
+                self.pan_start_pos = self.mapFromGlobal(QCursor.pos())
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+        else:
+            super().keyPressEvent(event)
+    
+    def wheelEvent(self, event):
+        """Обработка прокрутки колесика мыши для масштабирования с Ctrl."""
+        # Проверяем, нажат ли Ctrl
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Получаем направление прокрутки
+            delta = event.angleDelta().y()
+            
+            # Если есть ссылка на окно разметки, вызываем методы масштабирования
+            if hasattr(self, 'marking_window') and self.marking_window:
+                if delta > 0:
+                    # Прокрутка вверх - увеличение
+                    self.marking_window.zoom_in()
+                elif delta < 0:
+                    # Прокрутка вниз - уменьшение
+                    self.marking_window.zoom_out()
+                event.accept()
+                return
+        
+        # Если Ctrl не нажат, передаем событие дальше
+        super().wheelEvent(event)
+    
+    def keyReleaseEvent(self, event):
+        """Обработка отпускания клавиш."""
+        if event.key() == Qt.Key.Key_Space:
+            # Отпускание пробела - завершение панорамирования
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        super().keyReleaseEvent(event)
+
+
+class ImageMarkingWindow(QWidget):
+    """Окно для разметки изображения."""
+    
+    def __init__(self, image, image_name=None, parent=None):
+        super().__init__(parent)
+        # Устанавливаем флаги окна для создания отдельного окна
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setWindowTitle("Разметка изображения")
+        self.setMinimumSize(800, 600)
+        
+        # Сохраняем имя изображения
+        self.image_name = image_name if image_name is not None else "unknown"
+        
+        # Сохраняем оригинальное изображение (numpy array) для масштабирования
+        self.original_cv_image = image
+        
+        # Фактор масштабирования (будет рассчитан для подгонки под окно)
+        self.zoom_scale = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 10.0
+        self.zoom_step = 0.1
+        self.initial_zoom_calculated = False
+        
+        # Создаем горизонтальный layout для размещения изображения и списка bboxes
+        main_layout = QHBoxLayout(self)
+        
+        # Создаем кастомный виджет для отображения изображения с разметкой
+        self.image_widget = ImageDisplayWidget()
+        # Сохраняем ссылку на окно в виджете для обновления списка
+        self.image_widget.marking_window = self
+        
+        # Обертываем виджет изображения в QScrollArea для навигации с помощью scrollbars
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidget(self.image_widget)
+        self.scroll_area.setWidgetResizable(False)  # Виджет не будет автоматически изменять размер
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Подключаем сигналы прокрутки для синхронизации с pan_offset
+        self.scroll_area.horizontalScrollBar().valueChanged.connect(self.on_horizontal_scroll)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self.on_vertical_scroll)
+        
+        main_layout.addWidget(self.scroll_area, stretch=1)
+        
+        # Создаем список для отображения имен bboxes
+        bbox_list_layout = QVBoxLayout()
+        bbox_list_label = QLabel("Bounding Boxes:")
+        bbox_list_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        bbox_list_layout.addWidget(bbox_list_label)
+        
+        self.bbox_list_widget = QListWidget()
+        self.bbox_list_widget.setMaximumWidth(250)
+        self.bbox_list_widget.setMinimumWidth(200)
+        self.bbox_list_widget.itemClicked.connect(self.on_bbox_list_item_clicked)
+        bbox_list_layout.addWidget(self.bbox_list_widget)
+        
+        # Создаем контейнер для списка
+        bbox_list_container = QWidget()
+        bbox_list_container.setLayout(bbox_list_layout)
+        main_layout.addWidget(bbox_list_container)
+        
+        # Добавляем горячую клавишу Ctrl+S для сохранения в JSON
+        self.save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.save_shortcut.activated.connect(self.save_bboxes)
+        
+        # Добавляем горячие клавиши для масштабирования
+        self.zoom_in_shortcut = QShortcut(QKeySequence("Ctrl+="), self)  # Ctrl+= для увеличения
+        self.zoom_in_shortcut.activated.connect(self.zoom_in)
+        self.zoom_in_plus_shortcut = QShortcut(QKeySequence("Ctrl++"), self)  # Ctrl++ для увеличения
+        self.zoom_in_plus_shortcut.activated.connect(self.zoom_in)
+        self.zoom_out_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)  # Ctrl+- для уменьшения
+        self.zoom_out_shortcut.activated.connect(self.zoom_out)
+        
+        # Устанавливаем фокус на виджет изображения для получения событий клавиатуры
+        self.image_widget.setFocus()
+        
+        # Отображаем изображение (с начальным масштабом для подгонки под окно)
+        self.display_image(image)
+        
+        # Загружаем сохраненные bboxes для этого изображения
+        self.load_bboxes()
+        
+        # Обновляем список bboxes
+        self.update_bbox_list()
+    
+    def on_horizontal_scroll(self, value):
+        """Обработка горизонтальной прокрутки."""
+        # Синхронизируем pan_offset с позицией scrollbar
+        if hasattr(self, 'image_widget') and hasattr(self, 'scroll_area'):
+            h_scrollbar = self.scroll_area.horizontalScrollBar()
+            max_value = h_scrollbar.maximum()
+            if max_value > 0:
+                # Преобразуем значение scrollbar в pan_offset
+                # Scrollbar: 0 (слева) до max (справа)
+                # Когда scrollbar = 0, изображение сдвинуто вправо (pan_offset отрицательный)
+                # Когда scrollbar = max, изображение сдвинуто влево (pan_offset положительный)
+                center_x = max_value // 2
+                self.image_widget.pan_offset.setX(center_x - value)
+                self.image_widget.update()
+    
+    def on_vertical_scroll(self, value):
+        """Обработка вертикальной прокрутки."""
+        # Синхронизируем pan_offset с позицией scrollbar
+        if hasattr(self, 'image_widget') and hasattr(self, 'scroll_area'):
+            v_scrollbar = self.scroll_area.verticalScrollBar()
+            max_value = v_scrollbar.maximum()
+            if max_value > 0:
+                # Преобразуем значение scrollbar в pan_offset
+                # Scrollbar: 0 (вверху) до max (внизу)
+                # Когда scrollbar = 0, изображение сдвинуто вниз (pan_offset отрицательный)
+                # Когда scrollbar = max, изображение сдвинуто вверх (pan_offset положительный)
+                center_y = max_value // 2
+                self.image_widget.pan_offset.setY(center_y - value)
+                self.image_widget.update()
+    
+    def update_scrollbars(self):
+        """Обновить позиции scrollbars на основе pan_offset и размера изображения."""
+        if not hasattr(self, 'scroll_area') or not hasattr(self, 'image_widget'):
+            return
+        
+        # Вычисляем размеры для scrollbars на основе отображаемого pixmap
+        if not self.image_widget.display_pixmap:
+            return
+            
+        pixmap_size = self.image_widget.display_pixmap.size()
+        viewport_size = self.scroll_area.viewport().size()
+        
+        # Устанавливаем минимальный размер виджета равным размеру pixmap
+        self.image_widget.setMinimumSize(pixmap_size)
+        self.image_widget.resize(pixmap_size)
+        
+        # Обновляем диапазоны scrollbars
+        h_scrollbar = self.scroll_area.horizontalScrollBar()
+        v_scrollbar = self.scroll_area.verticalScrollBar()
+        
+        # Временно блокируем сигналы, чтобы избежать рекурсии
+        h_scrollbar.blockSignals(True)
+        v_scrollbar.blockSignals(True)
+        
+        if pixmap_size.width() > viewport_size.width():
+            h_max = pixmap_size.width() - viewport_size.width()
+            h_scrollbar.setMaximum(h_max)
+            h_scrollbar.setPageStep(viewport_size.width())
+            # Устанавливаем позицию на основе pan_offset
+            # pan_offset положительный = изображение сдвинуто влево = scrollbar должен быть меньше центра
+            # pan_offset отрицательный = изображение сдвинуто вправо = scrollbar должен быть больше центра
+            center_x = h_max // 2
+            scroll_value = center_x - self.image_widget.pan_offset.x()
+            scroll_value = max(0, min(h_max, scroll_value))  # Ограничиваем диапазон
+            h_scrollbar.setValue(int(scroll_value))
+            h_scrollbar.setVisible(True)
+        else:
+            h_scrollbar.setMaximum(0)
+            h_scrollbar.setVisible(False)
+        
+        if pixmap_size.height() > viewport_size.height():
+            v_max = pixmap_size.height() - viewport_size.height()
+            v_scrollbar.setMaximum(v_max)
+            v_scrollbar.setPageStep(viewport_size.height())
+            # Устанавливаем позицию на основе pan_offset
+            # pan_offset положительный = изображение сдвинуто вверх = scrollbar должен быть меньше центра
+            # pan_offset отрицательный = изображение сдвинуто вниз = scrollbar должен быть больше центра
+            center_y = v_max // 2
+            scroll_value = center_y - self.image_widget.pan_offset.y()
+            scroll_value = max(0, min(v_max, scroll_value))  # Ограничиваем диапазон
+            v_scrollbar.setValue(int(scroll_value))
+            v_scrollbar.setVisible(True)
+        else:
+            v_scrollbar.setMaximum(0)
+            v_scrollbar.setVisible(False)
+        
+        # Разблокируем сигналы
+        h_scrollbar.blockSignals(False)
+        v_scrollbar.blockSignals(False)
+    
+    def display_image(self, image=None):
+        """Отобразить изображение в окне с учетом текущего масштаба."""
+        try:
+            # Используем сохраненное изображение, если не передано новое
+            if image is None:
+                image = self.original_cv_image
+            else:
+                self.original_cv_image = image
+            
+            # Конвертируем BGR в RGB для Qt
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            
+            # Сохраняем оригинальное изображение для возможного использования
+            self.original_pixmap = pixmap
+            
+            # Рассчитываем начальный масштаб для подгонки изображения под окно (только при первом отображении)
+            if not self.initial_zoom_calculated:
+                # Получаем размер виджета изображения
+                widget_width = self.image_widget.width()
+                widget_height = self.image_widget.height()
+                
+                # Если виджет еще не отображен, используем размер окна
+                if widget_width <= 0 or widget_height <= 0:
+                    widget_width = self.width() - 20
+                    widget_height = self.height() - 20
+                
+                # Рассчитываем масштаб для подгонки изображения под размер виджета
+                if widget_width > 0 and widget_height > 0 and w > 0 and h > 0:
+                    scale_x = widget_width / w
+                    scale_y = widget_height / h
+                    # Используем меньший масштаб, чтобы изображение полностью поместилось
+                    self.zoom_scale = min(scale_x, scale_y) * 0.95  # 0.95 для небольшого отступа
+                    # Ограничиваем начальный масштаб разумными пределами
+                    self.zoom_scale = max(self.min_zoom, min(self.zoom_scale, self.max_zoom))
+                    self.initial_zoom_calculated = True
+            
+            # Применяем масштабирование
+            scaled_width = int(w * self.zoom_scale)
+            scaled_height = int(h * self.zoom_scale)
+            
+            # Масштабируем pixmap
+            scaled_pixmap = pixmap.scaled(
+                scaled_width, scaled_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            # Устанавливаем изображение в виджет
+            self.image_widget.set_image(scaled_pixmap)
+            
+            # Обновляем scrollbars после установки изображения
+            # Используем QTimer для отложенного обновления после того, как виджет обновится
+            QTimer.singleShot(10, self.update_scrollbars)
+            
+        except Exception as e:
+            error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
+            layout = self.layout()
+            if layout:
+                layout.addWidget(error_label)
+    
+    def zoom_in(self):
+        """Увеличить масштаб изображения."""
+        old_scale = self.zoom_scale
+        self.zoom_scale = min(self.zoom_scale + self.zoom_step, self.max_zoom)
+        if old_scale != self.zoom_scale:
+            self._update_bboxes_scale(old_scale, self.zoom_scale)
+            self.display_image()
+    
+    def zoom_out(self):
+        """Уменьшить масштаб изображения."""
+        old_scale = self.zoom_scale
+        self.zoom_scale = max(self.zoom_scale - self.zoom_step, self.min_zoom)
+        if old_scale != self.zoom_scale:
+            self._update_bboxes_scale(old_scale, self.zoom_scale)
+            self.display_image()
+            # Обновляем scrollbars после изменения масштаба
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(10, self.update_scrollbars)
+    
+    def _update_bboxes_scale(self, old_scale, new_scale):
+        """Обновить координаты bboxes при изменении масштаба."""
+        if old_scale == 0 or new_scale == 0:
+            return
+        scale_factor = new_scale / old_scale
+        bboxes = self.image_widget.bounding_boxes
+        updated_bboxes = []
+        for box in bboxes:
+            x1, y1, x2, y2, angle, selected, name = box
+            updated_bboxes.append((
+                x1 * scale_factor,
+                y1 * scale_factor,
+                x2 * scale_factor,
+                y2 * scale_factor,
+                angle,
+                selected,
+                name
+            ))
+        self.image_widget.bounding_boxes = updated_bboxes
+        self.image_widget.update()
+
+    def showEvent(self, event):
+        """Обработка показа окна - пересчитываем начальный масштаб если еще не был рассчитан."""
+        super().showEvent(event)
+        if hasattr(self, 'original_cv_image') and not self.initial_zoom_calculated:
+            # Пересчитываем начальный масштаб после того, как окно показано
+            self.initial_zoom_calculated = False
+            self.display_image()
+    
+    def resizeEvent(self, event):
+        """Обработка изменения размера окна разметки."""
+        # При изменении размера окна перерисовываем изображение с текущим масштабом
+        # (не пересчитываем начальный масштаб, чтобы сохранить пользовательский zoom)
+        if hasattr(self, 'original_cv_image'):
+            # Временно отключаем пересчет начального масштаба
+            was_calculated = self.initial_zoom_calculated
+            self.initial_zoom_calculated = True
+            self.display_image()
+            self.initial_zoom_calculated = was_calculated
+        super().resizeEvent(event)
+    
+    def get_bboxes_file_path(self):
+        """Получить путь к единому файлу для сохранения всех bboxes."""
+        project_root = Path(__file__).parent.parent.parent
+        markup_dir = project_root / "markup_info"
+        markup_dir.mkdir(exist_ok=True)
+        return markup_dir / "bboxes.json"
+    
+    def save_bboxes(self):
+        """Сохранить bboxes в единый JSON файл (для всех изображений)."""
+        try:
+            bboxes_file = self.get_bboxes_file_path()
+            bboxes = self.image_widget.bounding_boxes
+            
+            # Загружаем существующие данные, если файл есть
+            all_bboxes_data = {}
+            if bboxes_file.exists():
+                try:
+                    with open(bboxes_file, 'r', encoding='utf-8') as f:
+                        all_bboxes_data = json.load(f)
+                except:
+                    all_bboxes_data = {}
+            
+            # Конвертируем текущие bboxes в список словарей для JSON
+            # Важно: конвертируем координаты из масштабированного пространства в оригинальное
+            bboxes_data = []
+            for box in bboxes:
+                x1, y1, x2, y2, angle, selected, name = box
+                # Конвертируем координаты обратно в оригинальный размер изображения
+                orig_x1 = x1 / self.zoom_scale
+                orig_y1 = y1 / self.zoom_scale
+                orig_x2 = x2 / self.zoom_scale
+                orig_y2 = y2 / self.zoom_scale
+                bboxes_data.append({
+                    'x1': float(orig_x1),
+                    'y1': float(orig_y1),
+                    'x2': float(orig_x2),
+                    'y2': float(orig_y2),
+                    'angle': float(angle),
+                    'name': name if name else ""
+                })
+            
+            # Обновляем данные для текущего изображения (используем имя изображения как ключ)
+            image_key = self.image_name
+            all_bboxes_data[image_key] = bboxes_data
+            
+            # Сохраняем все данные обратно в JSON
+            with open(bboxes_file, 'w', encoding='utf-8') as f:
+                json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Ошибка при сохранении bboxes: {str(e)}")
+    
+    def load_bboxes(self):
+        """Загрузить bboxes из единого JSON файла для текущего изображения."""
+        try:
+            bboxes_file = self.get_bboxes_file_path()
+            
+            if not bboxes_file.exists():
+                return  # Нет сохраненных bboxes
+            
+            # Загружаем из JSON
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            # Извлекаем bboxes для текущего изображения (используем имя изображения как ключ)
+            image_key = self.image_name
+            if image_key not in all_bboxes_data:
+                return  # Нет bboxes для этого изображения
+            
+            bboxes_data = all_bboxes_data[image_key]
+            
+            # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
+            # Важно: конвертируем координаты из оригинального пространства в текущее масштабированное
+            loaded_bboxes = []
+            for bbox_data in bboxes_data:
+                # Конвертируем координаты из оригинального размера в текущий масштаб
+                scaled_x1 = bbox_data['x1'] * self.zoom_scale
+                scaled_y1 = bbox_data['y1'] * self.zoom_scale
+                scaled_x2 = bbox_data['x2'] * self.zoom_scale
+                scaled_y2 = bbox_data['y2'] * self.zoom_scale
+                loaded_bboxes.append((
+                    scaled_x1,
+                    scaled_y1,
+                    scaled_x2,
+                    scaled_y2,
+                    bbox_data.get('angle', 0.0),
+                    False,  # selected = False по умолчанию
+                    bbox_data.get('name', '')
+                ))
+            
+            # Устанавливаем загруженные bboxes
+            self.image_widget.bounding_boxes = loaded_bboxes
+            self.image_widget.update()  # Обновляем отображение
+            
+            # Обновляем список bboxes
+            self.update_bbox_list()
+            
+        except Exception as e:
+            print(f"Ошибка при загрузке bboxes: {str(e)}")
+    
+    def update_bbox_list(self):
+        """Обновить список имен bboxes в боковой панели."""
+        if not hasattr(self, 'bbox_list_widget'):
+            return
+        
+        self.bbox_list_widget.clear()
+        bboxes = self.image_widget.bounding_boxes
+        
+        for i, box in enumerate(bboxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            # Показываем имя или "Unnamed" если имя пустое
+            display_name = name if name else f"Unnamed #{i+1}"
+            self.bbox_list_widget.addItem(display_name)
+            
+            # Получаем элемент для настройки
+            item = self.bbox_list_widget.item(i)
+            if item:
+                # Выделяем неназванные элементы светло-красным цветом
+                if not name or name.strip() == "":
+                    light_red = QColor(255, 200, 200)  # Светло-красный цвет
+                    item.setBackground(light_red)
+                
+                # Выделяем текущий выбранный bbox
+                if selected and i == self.image_widget.selected_box_index:
+                    item.setSelected(True)
+                    self.bbox_list_widget.setCurrentItem(item)
+    
+    def on_bbox_list_item_clicked(self, item):
+        """Обработка клика по элементу списка bboxes - выделить соответствующий bbox."""
+        row = self.bbox_list_widget.row(item)
+        if 0 <= row < len(self.image_widget.bounding_boxes):
+            # Выделяем соответствующий bbox
+            self.image_widget.selected_box_index = row
+            # Обновляем флаги выбранности для всех bboxes
+            for i, box in enumerate(self.image_widget.bounding_boxes):
+                x1, y1, x2, y2, angle, selected, name = box
+                self.image_widget.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == row, name)
+            self.image_widget.update()
+            # Обновляем список для синхронизации выделения
+            self.update_bbox_list()
+    
+    def closeEvent(self, event):
+        """Обработка закрытия окна разметки."""
+        # Проверяем наличие неназванных bboxes
+        bboxes = self.image_widget.bounding_boxes
+        unnamed_bboxes = []
+        for i, box in enumerate(bboxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            if not name or name.strip() == "":
+                unnamed_bboxes.append(i + 1)  # +1 для отображения (начинаем с 1, а не 0)
+        
+        # Если есть неназванные bboxes, показываем предупреждение
+        if unnamed_bboxes:
+            unnamed_count = len(unnamed_bboxes)
+            if unnamed_count == 1:
+                message = f"Есть 1 неназванный bounding box (№{unnamed_bboxes[0]}).\n\nВы хотите вернуться и задать имя или продолжить закрытие окна?"
+            else:
+                bbox_numbers = ", ".join([f"№{num}" for num in unnamed_bboxes[:5]])  # Показываем первые 5
+                if unnamed_count > 5:
+                    bbox_numbers += f" и еще {unnamed_count - 5}"
+                message = f"Есть {unnamed_count} неназванных bounding boxes ({bbox_numbers}).\n\nВы хотите вернуться и задать имена или продолжить закрытие окна?"
+            
+            # Создаем диалог с кнопками "Вернуться" и "Продолжить"
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Неназванные bounding boxes")
+            msg_box.setText(message)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            
+            # Добавляем кнопки
+            go_back_button = msg_box.addButton("Вернуться", QMessageBox.ButtonRole.RejectRole)
+            continue_button = msg_box.addButton("Продолжить", QMessageBox.ButtonRole.AcceptRole)
+            
+            # Устанавливаем кнопку по умолчанию
+            msg_box.setDefaultButton(go_back_button)
+            
+            # Показываем диалог
+            msg_box.exec()
+            
+            # Если пользователь выбрал "Вернуться", отменяем закрытие
+            if msg_box.clickedButton() == go_back_button:
+                event.ignore()
+                return
+        
+        # Сохраняем bboxes перед закрытием
+        self.save_bboxes()
+        
+        # Очищаем ссылку в главном окне, если она существует
+        if hasattr(self, 'main_window_ref'):
+            self.main_window_ref.marking_window = None
         event.accept()
 
 
