@@ -36,8 +36,15 @@ import math
 from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
-from cnc_control.utils import create_component_collage, save_component_crops
+from cnc_control.utils import create_component_collage, save_component_crops, get_component_crop
 from cnc_control.core.algorithms import SiftImageAligner
+from cnc_control.core.algorithms.segmentation import (
+    ImagePreprocessor,
+    ComponentSegmenter,
+    MaskPostprocessor,
+    calculate_iou,
+    get_bottom_edge_angle
+)
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -80,6 +87,22 @@ class MainWindowControllerV2(QMainWindow):
         
         # Control images data
         self.images_data = []  # [(row, col, file_path, image), ...] - данные контрольных изображений
+        
+        # Component crops data
+        # Список словарей с информацией о кропах компонентов:
+        # {
+        #   'etalon_crop': np.ndarray,
+        #   'control_crop': np.ndarray,
+        #   'photo_key': str,  # например, "photo_0_0"
+        #   'component_name': str,  # имя компонента
+        #   'component_id': int,  # индекс компонента
+        #   'col': int,  # столбец контрольного изображения
+        #   'row': int,  # строка контрольного изображения
+        #   'etalon_col': int,  # столбец эталонного изображения
+        #   'etalon_row': int,  # строка эталонного изображения
+        #   'bbox': dict  # исходный bbox с координатами
+        # }
+        self.component_crops = []
         
         # Reference to marking window to prevent garbage collection
         self.marking_window = None
@@ -549,6 +572,10 @@ class MainWindowControllerV2(QMainWindow):
             # Сортируем по координатам (сначала по row, потом по col)
             self.images_data.sort(key=lambda x: (x[0], x[1]))
             
+            # Применяем выравнивание SIFT к контрольным изображениям
+            print("Применение выравнивания SIFT к контрольным изображениям...")
+            self._align_control_images()
+            
             # Определяем размеры сетки
             max_row = max(img[0] for img in self.images_data)  # Максимальная строка (Y)
             max_col = max(img[1] for img in self.images_data)  # Максимальный столбец (X)
@@ -617,6 +644,139 @@ class MainWindowControllerV2(QMainWindow):
             import traceback
             traceback.print_exc()
     
+    def _align_control_images(self):
+        """
+        Выравнивает контрольные изображения относительно эталонных с использованием SIFT.
+        Обновляет self.images_data, заменяя исходные изображения на выровненные.
+        """
+        try:
+            project_root = Path(__file__).parent.parent.parent
+            
+            # Загружаем файл маппинга
+            mapping_file = project_root / "markup_info" / "etalon_mapping.json"
+            if not mapping_file.exists():
+                print(f"Предупреждение: файл маппинга не найден: {mapping_file}, выравнивание пропущено")
+                return
+            
+            with open(mapping_file, 'r', encoding='utf-8') as f:
+                mapping_data = json.load(f)
+            
+            if 'mappings' not in mapping_data or not mapping_data['mappings']:
+                print("Предупреждение: файл маппинга не содержит данных, выравнивание пропущено")
+                return
+            
+            # Создаем выравниватель изображений
+            image_aligner = SiftImageAligner(
+                scale=0.25,
+                nfeatures=0,
+                contrast_threshold=0.06,
+                edge_threshold=15,
+                sigma=1.6,
+                match_ratio=0.75,
+                ransac_threshold=5.0
+            )
+            
+            # Создаем словарь контрольных изображений для быстрого доступа
+            control_images_dict = {}
+            for row, col, file_path, image in self.images_data:
+                control_images_dict[(col, row)] = (file_path, image)
+            
+            # Обрабатываем каждое правило маппинга
+            for mapping in mapping_data['mappings']:
+                etalon_indices = mapping.get('etalon_indices', [])
+                control_indices_groups = mapping.get('control_indices', [])
+                
+                if not etalon_indices or not control_indices_groups:
+                    continue
+                
+                # Ищем эталонные изображения в стандартных местах
+                possible_etalon_paths = [
+                    project_root / "data" / "plate_3" / "etalon_2" / "images",
+                    project_root / "data" / "plate_3" / "etalon_2",
+                    project_root / "data" / "plate_3" / "etalon" / "images",
+                    project_root / "data" / "plate_3" / "etalon",
+                ]
+                
+                etalon_images_folder = None
+                for path in possible_etalon_paths:
+                    if path.exists():
+                        etalon_images_folder = path
+                        break
+                
+                if etalon_images_folder is None:
+                    print(f"Предупреждение: не найдена папка с эталонными изображениями")
+                    continue
+                
+                # Загружаем эталонные изображения (только те, что указаны в etalon_indices)
+                etalon_images_dict = {}
+                for img_file in etalon_images_folder.iterdir():
+                    if img_file.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+                        match = re.search(r'_(\d+)_(\d+)', img_file.stem)
+                        if match:
+                            col = int(match.group(1))
+                            row = int(match.group(2))
+                            if [col, row] in etalon_indices:
+                                etalon_img = cv2.imread(str(img_file))
+                                if etalon_img is not None:
+                                    etalon_images_dict[(col, row)] = etalon_img
+                
+                if not etalon_images_dict:
+                    print(f"Предупреждение: не найдено эталонных изображений для указанных индексов")
+                    continue
+                
+                # Обрабатываем каждую группу контрольных индексов
+                for control_indices_group in control_indices_groups:
+                    # Создаем сопоставление: эталонный индекс -> контрольный индекс
+                    if len(etalon_indices) != len(control_indices_group):
+                        continue
+                    
+                    # Создаем словарь сопоставления
+                    index_mapping = {}
+                    for i, etalon_idx in enumerate(etalon_indices):
+                        if i < len(control_indices_group):
+                            etalon_key = tuple(etalon_idx)
+                            control_key = tuple(control_indices_group[i])
+                            index_mapping[control_key] = etalon_key
+                    
+                    # Выравниваем контрольные изображения
+                    for control_idx in control_indices_group:
+                        col, row = control_idx
+                        
+                        # Проверяем наличие контрольного изображения
+                        if (col, row) not in control_images_dict:
+                            continue
+                        
+                        file_path, control_image = control_images_dict[(col, row)]
+                        
+                        # Находим соответствующий эталонный индекс
+                        if (col, row) not in index_mapping:
+                            continue
+                        
+                        etalon_col, etalon_row = index_mapping[(col, row)]
+                        
+                        # Проверяем наличие эталонного изображения
+                        if (etalon_col, etalon_row) not in etalon_images_dict:
+                            continue
+                        
+                        etalon_image = etalon_images_dict[(etalon_col, etalon_row)]
+                        
+                        # Выравниваем контрольное изображение относительно эталонного
+                        print(f"Выравнивание контрольного изображения ({col}, {row}) относительно эталона ({etalon_col}, {etalon_row})...")
+                        aligned_control_image = image_aligner.align(etalon_image, control_image)
+                        
+                        # Обновляем изображение в images_data
+                        for i, (r, c, fp, img) in enumerate(self.images_data):
+                            if r == row and c == col:
+                                self.images_data[i] = (r, c, fp, aligned_control_image)
+                                break
+            
+            print("Выравнивание контрольных изображений завершено")
+            
+        except Exception as e:
+            print(f"Ошибка при выравнивании контрольных изображений: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
     def run_inspection(self):
         """Обработчик нажатия на кнопку 'Запустить инспекцию'."""
         if not self.images_data:
@@ -653,18 +813,33 @@ class MainWindowControllerV2(QMainWindow):
             with open(bboxes_file, 'r', encoding='utf-8') as f:
                 bboxes_data = json.load(f)
             
-            # Создаем выравниватель изображений
-            image_aligner = SiftImageAligner(
-                scale=0.25,
-                nfeatures=0,
-                contrast_threshold=0.06,
-                edge_threshold=15,
-                sigma=1.6,
-                match_ratio=0.75,
-                ransac_threshold=5.0
-            )
+            # Инициализируем компоненты сегментации
+            # Определяем путь к модели
+            model_path = project_root / "data" / "extended_many_augs.pth"
+            segmenter = None
+            postprocessor = None
+            preprocessor = None
+            
+            if model_path.exists():
+                try:
+                    segmenter = ComponentSegmenter(
+                        model_path=str(model_path),
+                        device='cpu',  # Можно изменить на 'cuda' если доступна GPU
+                        input_size=(224, 224)
+                    )
+                    postprocessor = MaskPostprocessor(
+                        threshold=0.5,
+                        min_contour_area=100
+                    )
+                    preprocessor = ImagePreprocessor()
+                    print("Компоненты сегментации инициализированы")
+                except Exception as e:
+                    print(f"Предупреждение: не удалось инициализировать сегментатор: {str(e)}")
+            else:
+                print(f"Предупреждение: модель сегментации не найдена: {model_path}")
             
             # Создаем словарь контрольных изображений для быстрого доступа
+            # Изображения уже выровнены при загрузке
             control_images_dict = {}
             for row, col, file_path, image in self.images_data:
                 control_images_dict[(col, row)] = image
@@ -757,10 +932,7 @@ class MainWindowControllerV2(QMainWindow):
                         
                         etalon_image = etalon_images_dict[(etalon_col, etalon_row)]
                         
-                        # Выравниваем контрольное изображение относительно эталонного
-                        print(f"Выравнивание контрольного изображения ({col}, {row}) относительно эталона ({etalon_col}, {etalon_row})...")
-                        aligned_control_image = image_aligner.align(etalon_image, control_image)
-                        
+                        # Контрольное изображение уже выровнено при загрузке, используем его напрямую
                         # Формируем ключ для поиска bboxes (используем эталонный индекс)
                         photo_key = f"photo_{etalon_col}_{etalon_row}"
                         
@@ -775,11 +947,98 @@ class MainWindowControllerV2(QMainWindow):
                             print(f"Предупреждение: нет bboxes для {photo_key}")
                             continue
                         
-                        # Создаем коллаж с кропами компонентов (используем выровненное контрольное изображение)
-                        saved_count += save_component_crops(
-                            etalon_image, aligned_control_image, bboxes, col, row, 
-                            data_folder, photo_key
-                        )
+                        # Извлекаем кропы компонентов и добавляем их в поле класса
+                        for idx, bbox in enumerate(bboxes):
+                            component_name = bbox.get('name', f'Component_{idx+1}')
+                            
+                            # Извлекаем кропы компонента (контрольное изображение уже выровнено)
+                            etalon_crop, control_crop = get_component_crop(etalon_image, control_image, bbox)
+                            
+                            if etalon_crop is None or control_crop is None:
+                                print(f"Предупреждение: пустой кроп для компонента {component_name} в {photo_key}")
+                                continue
+                            
+                            # Добавляем информацию о кропе в поле класса
+                            self.component_crops.append({
+                                'etalon_crop': etalon_crop.copy(),
+                                'control_crop': control_crop.copy(),
+                                'photo_key': photo_key,
+                                'component_name': component_name,
+                                'component_id': idx,
+                                'col': col,
+                                'row': row,
+                                'etalon_col': etalon_col,
+                                'etalon_row': etalon_row,
+                                'bbox': dict(bbox)  # Сохраняем исходный bbox (копируем словарь)
+                            })
+                        
+                        # Создаем коллаж с кропами компонентов (контрольное изображение уже выровнено)
+                        # saved_count += save_component_crops(
+                        #     etalon_image, control_image, bboxes, col, row, 
+                        #     data_folder, photo_key
+                        # )
+            
+            # Выполняем сегментацию компонентов из списка component_crops
+            if self.component_crops and segmenter is not None and postprocessor is not None and preprocessor is not None:
+                print(f"\nНачинаем сегментацию {len(self.component_crops)} компонентов...")
+                for crop_data in self.component_crops:
+                    try:
+                        etalon_crop = crop_data['etalon_crop']
+                        control_crop = crop_data['control_crop']
+                        component_name = crop_data['component_name']
+                        
+                        # Препроцессинг: подготовка изображений для сегментации
+                        etalon_gray, etalon_w, etalon_h = preprocessor.prepare_image_for_segmentation(etalon_crop)
+                        control_gray, control_w, control_h = preprocessor.prepare_image_for_segmentation(control_crop)
+                        
+                        # Сегментация: предсказание масок
+                        etalon_mask_pred = segmenter.predict_mask(etalon_gray, (etalon_w, etalon_h))
+                        control_mask_pred = segmenter.predict_mask(control_gray, (control_w, control_h))
+                        
+                        # Постпроцессинг: обработка масок
+                        etalon_mask_cleaned, etalon_contours = postprocessor.process_mask(etalon_mask_pred)
+                        control_mask_cleaned, control_contours = postprocessor.process_mask(control_mask_pred)
+                        
+                        # Вычисление метрик
+                        iou = calculate_iou(etalon_mask_cleaned, control_mask_cleaned)
+                        
+                        # Вычисление углов
+                        etalon_angle = 0.0
+                        control_angle = 0.0
+                        
+                        if etalon_contours:
+                            etalon_angle = get_bottom_edge_angle(etalon_contours[0])
+                        
+                        if control_contours:
+                            control_angle = get_bottom_edge_angle(control_contours[0])
+                        
+                        # Вычисляем разницу углов
+                        angle_diff = abs(etalon_angle - control_angle)
+                        
+                        # Добавляем метрики в словарь
+                        crop_data['iou'] = iou
+                        crop_data['angle'] = angle_diff
+                        crop_data['etalon_angle'] = etalon_angle
+                        crop_data['control_angle'] = control_angle
+                        
+                        print(f"  {component_name} ({crop_data['photo_key']}): IoU={iou:.3f}, угол={angle_diff:.2f}°")
+                        
+                    except Exception as e:
+                        print(f"Ошибка при сегментации компонента {crop_data.get('component_name', 'unknown')}: {str(e)}")
+                        # Добавляем значения по умолчанию при ошибке
+                        crop_data['iou'] = 0.0
+                        crop_data['angle'] = 0.0
+                        crop_data['etalon_angle'] = 0.0
+                        crop_data['control_angle'] = 0.0
+                print("Сегментация завершена")
+            elif self.component_crops:
+                print("Предупреждение: сегментация не выполнена - компоненты сегментации не инициализированы")
+                # Добавляем значения по умолчанию
+                for crop_data in self.component_crops:
+                    crop_data['iou'] = 0.0
+                    crop_data['angle'] = 0.0
+                    crop_data['etalon_angle'] = 0.0
+                    crop_data['control_angle'] = 0.0
             
             if saved_count > 0:
                 print(f"Успешно сохранено {saved_count} коллажей в папку {data_folder}")

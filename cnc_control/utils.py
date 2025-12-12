@@ -266,3 +266,55 @@ def save_component_crops(etalon_image, control_image, bboxes, col, row, data_fol
         import traceback
         traceback.print_exc()
         return 0
+
+
+def get_component_crop(etalon_image, control_image, bbox):
+    """
+    Извлекает кроп компонента из эталонного и контрольного изображений по bbox.
+    
+    Args:
+        etalon_image: Эталонное изображение (numpy array, BGR)
+        control_image: Контрольное изображение (numpy array, BGR)
+        bbox: Словарь с координатами bbox компонента (x1, y1, x2, y2, angle, name)
+    
+    Returns:
+        Tuple[etalon_crop, control_crop] или (None, None) если кроп пустой
+    """
+    try:
+        x1, y1, x2, y2 = int(bbox['x1']), int(bbox['y1']), int(bbox['x2']), int(bbox['y2'])
+        angle = bbox.get('angle', 0.0)
+        
+        # Проверяем границы изображения
+        etalon_h, etalon_w = etalon_image.shape[:2]
+        control_h, control_w = control_image.shape[:2]
+        
+        # Ограничиваем координаты границами изображения
+        x1_safe = max(0, min(x1, etalon_w, control_w))
+        y1_safe = max(0, min(y1, etalon_h, control_h))
+        x2_safe = max(x1_safe + 1, min(x2, etalon_w, control_w))
+        y2_safe = max(y1_safe + 1, min(y2, etalon_h, control_h))
+        
+        # Делаем кроп из эталонного изображения
+        etalon_crop = etalon_image[y1_safe:y2_safe, x1_safe:x2_safe].copy()
+        
+        # Делаем кроп из контрольного изображения
+        control_crop = control_image[y1_safe:y2_safe, x1_safe:x2_safe].copy()
+        
+        # Проверяем, что кропы не пустые
+        if etalon_crop.size == 0 or control_crop.size == 0:
+            return None, None
+        
+        # Если нужно, применяем поворот
+        if abs(angle) > 0.1:
+            center = (etalon_crop.shape[1] // 2, etalon_crop.shape[0] // 2)
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            etalon_crop = cv2.warpAffine(etalon_crop, M, (etalon_crop.shape[1], etalon_crop.shape[0]))
+            control_crop = cv2.warpAffine(control_crop, M, (control_crop.shape[1], control_crop.shape[0]))
+        
+        return etalon_crop, control_crop
+        
+    except Exception as e:
+        print(f"Ошибка при извлечении кропа компонента: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None, None
