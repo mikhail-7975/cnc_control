@@ -530,6 +530,29 @@ class MainWindowControllerV2(QMainWindow):
             return
         
         try:
+            # Загружаем изображения из папки
+            if not self._load_control_images_from_folder(folder_path):
+                return
+            
+            # Отображаем загруженные изображения
+            self._display_control_images()
+            
+        except Exception as e:
+            self.show_error(f"Ошибка при загрузке изображений: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def _load_control_images_from_folder(self, folder_path: str) -> bool:
+        """
+        Загружает контрольные изображения из указанной папки и сохраняет их в self.images_data.
+        
+        Args:
+            folder_path: Путь к папке с изображениями
+        
+        Returns:
+            bool: True если загрузка прошла успешно, False в противном случае
+        """
+        try:
             # Получаем все изображения из папки
             image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif'}
             image_files = []
@@ -540,7 +563,7 @@ class MainWindowControllerV2(QMainWindow):
             
             if not image_files:
                 self.show_error("В выбранной папке не найдено изображений")
-                return
+                return False
             
             # Парсим имена файлов для извлечения координат
             # Формат: photo_X_Y.png, где X - столбец (горизонталь), Y - строка (вертикаль)
@@ -567,7 +590,7 @@ class MainWindowControllerV2(QMainWindow):
             
             if not self.images_data:
                 self.show_error("Не удалось загрузить изображения или определить их координаты")
-                return
+                return False
             
             # Сортируем по координатам (сначала по row, потом по col)
             self.images_data.sort(key=lambda x: (x[0], x[1]))
@@ -576,73 +599,152 @@ class MainWindowControllerV2(QMainWindow):
             print("Применение выравнивания SIFT к контрольным изображениям...")
             self._align_control_images()
             
-            # Определяем размеры сетки
-            max_row = max(img[0] for img in self.images_data)  # Максимальная строка (Y)
-            max_col = max(img[1] for img in self.images_data)  # Максимальный столбец (X)
-            
-            # Очищаем виджет и создаем новый layout
-            photo_widget = self.ui.photo_display_widget
-            # Удаляем старый layout, если он есть
-            old_layout = photo_widget.layout()
-            if old_layout:
-                # Удаляем все виджеты из старого layout
-                while old_layout.count():
-                    child = old_layout.takeAt(0)
-                    if child.widget():
-                        child.widget().deleteLater()
-            
-            # Создаем scroll area для прокрутки, если изображений много
-            scroll_area = QScrollArea(photo_widget)
-            scroll_area.setWidgetResizable(True)
-            scroll_widget = QWidget()
-            grid_layout_widget = QGridLayout(scroll_widget)
-            grid_layout_widget.setSpacing(5)
-            
-            # Добавляем изображения в сетку
-            # Нумерация: снизу вверх, слева направо
-            # В QGridLayout строка 0 - это верх, поэтому инвертируем row
-            for row, col, file_path, image in self.images_data:
-                # Конвертируем BGR в RGB для Qt
-                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-                pixmap = QPixmap.fromImage(qt_image)
-                
-                # Масштабируем изображение для отображения в мозаике
-                # Размер каждой ячейки примерно 200x200 пикселей
-                cell_size = 200
-                scaled_pixmap = pixmap.scaled(
-                    cell_size, cell_size,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                
-                # Создаем QLabel для отображения изображения
-                label = QLabel()
-                label.setPixmap(scaled_pixmap)
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setStyleSheet("border: 1px solid gray;")
-                
-                # Добавляем в сетку: инвертируем row для отображения снизу вверх
-                # row=0 (низ) должен быть в позиции max_row, row=max_row (верх) должен быть в позиции 0
-                grid_row = max_row - row
-                grid_layout_widget.addWidget(label, grid_row, col)
-            
-            scroll_area.setWidget(scroll_widget)
-            
-            # Создаем новый layout для photo_widget
-            main_layout = QVBoxLayout(photo_widget)
-            main_layout.setContentsMargins(0, 0, 0, 0)
-            main_layout.addWidget(scroll_area)
-            photo_widget.setLayout(main_layout)
-            
-            print(f"Загружено {len(self.images_data)} изображений в сетку {max_row + 1}x{max_col + 1}")
+            return True
             
         except Exception as e:
             self.show_error(f"Ошибка при загрузке изображений: {str(e)}")
             import traceback
             traceback.print_exc()
+            return False
+    
+    def _display_control_images(self):
+        """
+        Отображает загруженные в self.images_data изображения в photo_display_widget.
+        Если layout уже существует, обновляет существующие изображения.
+        """
+        if not self.images_data:
+            return
+        
+        # Определяем размеры сетки
+        max_row = max(img[0] for img in self.images_data)  # Максимальная строка (Y)
+        max_col = max(img[1] for img in self.images_data)  # Максимальный столбец (X)
+        
+        photo_widget = self.ui.photo_display_widget
+        old_layout = photo_widget.layout()
+        
+        # Если layout уже существует, пытаемся обновить существующие изображения
+        if old_layout:
+            # Пытаемся найти scroll_area в существующем layout
+            scroll_area = None
+            for i in range(old_layout.count()):
+                item = old_layout.itemAt(i)
+                if item and item.widget():
+                    widget = item.widget()
+                    if isinstance(widget, QScrollArea):
+                        scroll_area = widget
+                        break
+            
+            if scroll_area:
+                # Находим grid_layout внутри scroll_area
+                scroll_widget = scroll_area.widget()
+                if scroll_widget:
+                    grid_layout = scroll_widget.layout()
+                    if grid_layout:
+                        # Обновляем существующие изображения
+                        self._update_existing_images(grid_layout, max_row, max_col)
+                        print(f"Обновлено {len(self.images_data)} изображений в сетке {max_row + 1}x{max_col + 1}")
+                        return
+        
+        # Если layout не существует или не удалось обновить, создаем новый
+        # Очищаем виджет и создаем новый layout
+        # Удаляем старый layout, если он есть
+        if old_layout:
+            # Удаляем все виджеты из старого layout
+            while old_layout.count():
+                child = old_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            # Удаляем layout из виджета
+            old_layout.setParent(None)
+        
+        # Создаем scroll area для прокрутки, если изображений много
+        scroll_area = QScrollArea(photo_widget)
+        scroll_area.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        grid_layout_widget = QGridLayout(scroll_widget)
+        grid_layout_widget.setSpacing(5)
+        
+        # Добавляем изображения в сетку
+        # Нумерация: снизу вверх, слева направо
+        # В QGridLayout строка 0 - это верх, поэтому инвертируем row
+        for row, col, file_path, image in self.images_data:
+            # Конвертируем BGR в RGB для Qt
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            
+            # Масштабируем изображение для отображения в мозаике
+            # Размер каждой ячейки примерно 200x200 пикселей
+            cell_size = 200
+            scaled_pixmap = pixmap.scaled(
+                cell_size, cell_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            # Создаем QLabel для отображения изображения
+            label = QLabel()
+            label.setPixmap(scaled_pixmap)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet("border: 1px solid gray;")
+            
+            # Добавляем в сетку: инвертируем row для отображения снизу вверх
+            # row=0 (низ) должен быть в позиции max_row, row=max_row (верх) должен быть в позиции 0
+            grid_row = max_row - row
+            grid_layout_widget.addWidget(label, grid_row, col)
+        
+        scroll_area.setWidget(scroll_widget)
+        
+        # Создаем новый layout для photo_widget
+        main_layout = QVBoxLayout(photo_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll_area)
+        photo_widget.setLayout(main_layout)
+        
+        print(f"Загружено {len(self.images_data)} изображений в сетку {max_row + 1}x{max_col + 1}")
+    
+    def _update_existing_images(self, grid_layout, max_row, max_col):
+        """
+        Обновляет существующие изображения в grid_layout без пересоздания виджетов.
+        
+        Args:
+            grid_layout: QGridLayout с существующими QLabel
+            max_row: Максимальная строка
+            max_col: Максимальный столбец
+        """
+        # Создаем словарь для быстрого доступа к изображениям по координатам
+        images_dict = {}
+        for row, col, file_path, image in self.images_data:
+            images_dict[(row, col)] = image
+        
+        # Проходим по всем позициям в grid_layout и обновляем изображения
+        for row, col, file_path, image in self.images_data:
+            grid_row = max_row - row
+            
+            # Находим существующий QLabel в этой позиции
+            item = grid_layout.itemAtPosition(grid_row, col)
+            if item and item.widget():
+                label = item.widget()
+                if isinstance(label, QLabel):
+                    # Конвертируем BGR в RGB для Qt
+                    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    h, w, ch = rgb_image.shape
+                    bytes_per_line = ch * w
+                    qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+                    pixmap = QPixmap.fromImage(qt_image)
+                    
+                    # Масштабируем изображение для отображения в мозаике
+                    cell_size = 200
+                    scaled_pixmap = pixmap.scaled(
+                        cell_size, cell_size,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    
+                    # Обновляем pixmap в существующем QLabel
+                    label.setPixmap(scaled_pixmap)
     
     def _align_control_images(self):
         """
@@ -824,7 +926,7 @@ class MainWindowControllerV2(QMainWindow):
                 try:
                     segmenter = ComponentSegmenter(
                         model_path=str(model_path),
-                        device='cpu',  # Можно изменить на 'cuda' если доступна GPU
+                        device='cuda',  # Можно изменить на 'cuda' если доступна GPU
                         input_size=(224, 224)
                     )
                     postprocessor = MaskPostprocessor(
@@ -1049,9 +1151,122 @@ class MainWindowControllerV2(QMainWindow):
                 )
             else:
                 self.show_error("Не удалось сохранить ни одного коллажа")
+            
+            # Отображаем результаты инспекции с обведенными bbox-ами
+            self.display_inspection_results()
                 
         except Exception as e:
             self.show_error(f"Ошибка при создании коллажей: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def display_inspection_results(self):
+        """
+        Отображает результаты инспекции, обводя bbox-ы компонентов цветами:
+        - Красный: iou < 0.5
+        - Синий: angle > 5 или 0.5 < iou < 0.65
+        """
+        if not self.component_crops or not self.images_data:
+            print("Предупреждение: нет данных для отображения результатов")
+            return
+        
+        try:
+            # Создаем словарь для быстрого доступа к изображениям по координатам
+            images_dict = {}
+            for row, col, file_path, image in self.images_data:
+                images_dict[(col, row)] = image
+            
+            # Проходим по всем компонентам и рисуем bbox-ы
+            for crop_data in self.component_crops:
+                col = crop_data.get('col')
+                row = crop_data.get('row')
+                bbox = crop_data.get('bbox')
+                iou = crop_data.get('iou', 0.0)
+                angle = crop_data.get('angle', 0.0)  # angle_diff
+                
+                # Проверяем наличие необходимых данных
+                if col is None or row is None or bbox is None:
+                    continue
+                
+                # Проверяем наличие изображения
+                if (col, row) not in images_dict:
+                    continue
+                
+                image = images_dict[(col, row)]
+                
+                # Определяем цвет bbox
+                color = None
+                if iou < 0.5:
+                    # Красный цвет для iou < 0.5
+                    color = (0, 0, 255)  # BGR формат для OpenCV
+                elif angle > 5 or (0.5 < iou < 0.65):
+                    # Синий цвет для angle > 5 или 0.5 < iou < 0.65
+                    color = (255, 0, 0)  # BGR формат для OpenCV
+                
+                # Если цвет определен, рисуем bbox
+                if color is not None:
+                    x1 = int(bbox.get('x1', 0))
+                    y1 = int(bbox.get('y1', 0))
+                    x2 = int(bbox.get('x2', 0))
+                    y2 = int(bbox.get('y2', 0))
+                    
+                    # Проверяем границы изображения
+                    h, w = image.shape[:2]
+                    x1 = max(0, min(x1, w - 1))
+                    y1 = max(0, min(y1, h - 1))
+                    x2 = max(x1 + 1, min(x2, w))
+                    y2 = max(y1 + 1, min(y2, h))
+                    
+                    # Рисуем прямоугольник
+                    thickness = 36
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
+                    
+                    # Опционально: добавляем текст с метриками
+                    component_name = crop_data.get('component_name', '')
+                    label = f"{component_name}: IoU={iou:.2f}, Ang={angle:.1f}°"
+                    
+                    # Позиция текста (над прямоугольником)
+                    text_y = max(y1 - 10, 20)
+                    text_x = x1
+                    
+                    # Рисуем текст с фоном для лучшей читаемости
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.6
+                    text_thickness = 1
+                    
+                    # Получаем размер текста
+                    (text_width, text_height), baseline = cv2.getTextSize(
+                        label, font, font_scale, text_thickness
+                    )
+                    
+                    # Рисуем фон для текста
+                    cv2.rectangle(
+                        image,
+                        (text_x, text_y - text_height - baseline - 5),
+                        (text_x + text_width, text_y + baseline),
+                        (0, 0, 0),  # Черный фон
+                        -1
+                    )
+                    
+                    # Рисуем текст
+                    cv2.putText(
+                        image,
+                        label,
+                        (text_x, text_y),
+                        font,
+                        font_scale,
+                        color,
+                        text_thickness,
+                        cv2.LINE_AA
+                    )
+            
+            # Обновляем отображение изображений
+            self._display_control_images()
+            
+            print(f"Отображены результаты инспекции для {len(self.component_crops)} компонентов")
+            
+        except Exception as e:
+            print(f"Ошибка при отображении результатов инспекции: {str(e)}")
             import traceback
             traceback.print_exc()
     

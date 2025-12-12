@@ -16,7 +16,7 @@ class ComponentSegmenter:
     def __init__(
         self,
         model_path: str,
-        device: str = 'cpu',
+        device: str = 'cuda',
         encoder_name: str = "resnet101",
         encoder_weights: str = "imagenet",
         input_size: Tuple[int, int] = (224, 224)
