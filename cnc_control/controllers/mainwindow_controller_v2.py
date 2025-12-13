@@ -1005,15 +1005,16 @@ class MainWindowControllerV2(QMainWindow):
         image_name = image_item.text()
         
         # Подтверждение удаления
-        reply = QMessageBox.question(
-            self,
-            "Удаление компонента",
-            f"Вы уверены, что хотите удалить компонент '{component_name}' из изображения '{image_name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Icon.Question)
+        msg_box.setWindowTitle("Удаление компонента")
+        msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}' из изображения '{image_name}'?")
+        btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
+        btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
+        msg_box.setDefaultButton(btn_no)
+        msg_box.exec()
         
-        if reply != QMessageBox.StandardButton.Yes:
+        if msg_box.clickedButton() != btn_yes:
             return
         
         # Загружаем bboxes для этого изображения из файла
@@ -2749,6 +2750,39 @@ class ImageDisplayWidget(QWidget):
                 if hasattr(self, 'main_window_ref') and self.main_window_ref:
                     self.main_window_ref.save_current_etalon_bboxes()
     
+    def _confirm_delete_bbox(self):
+        """Показать диалог подтверждения удаления бокса."""
+        if self.selected_box_index is None or self.selected_box_index >= len(self.bounding_boxes):
+            return False
+        
+        box = self.bounding_boxes[self.selected_box_index]
+        x1, y1, x2, y2, angle, selected, name = box
+        
+        # Получаем родительское окно для показа диалога
+        parent = self.parent()
+        while parent and not isinstance(parent, QMainWindow):
+            parent = parent.parent()
+        
+        if not parent:
+            # Если не нашли главное окно, используем self
+            parent = self
+        
+        # Показываем диалог подтверждения
+        msg_box = QMessageBox(parent)
+        msg_box.setIcon(QMessageBox.Icon.Question)
+        msg_box.setWindowTitle("Удаление компонента")
+        
+        # Формируем текст сообщения
+        component_name = name if name and name.strip() else "неназванный компонент"
+        msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}'?")
+        
+        btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
+        btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
+        msg_box.setDefaultButton(btn_no)
+        msg_box.exec()
+        
+        return msg_box.clickedButton() == btn_yes
+    
     def keyPressEvent(self, event):
         """Обработка нажатия клавиш."""
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
@@ -2756,8 +2790,12 @@ class ImageDisplayWidget(QWidget):
             if self.selected_box_index is not None:
                 self._show_name_dialog_for_selected_box()
         elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
-            # Если нажат Delete/Backspace и есть выбранный бокс, удаляем его
+            # Если нажат Delete/Backspace и есть выбранный бокс, показываем подтверждение и удаляем его
             if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
+                # Показываем диалог подтверждения
+                if not self._confirm_delete_bbox():
+                    return
+                
                 # Удаляем выбранный бокс
                 del self.bounding_boxes[self.selected_box_index]
                 # Сбрасываем выделение
