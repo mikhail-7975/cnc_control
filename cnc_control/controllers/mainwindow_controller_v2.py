@@ -1816,6 +1816,54 @@ class ImageDisplayWidget(QWidget):
         
         return None, None
     
+    def constrain_pan_offset(self):
+        """Ограничить pan_offset так, чтобы изображение не выходило за границы виджета."""
+        if not self.display_pixmap:
+            self.pan_offset = QPoint(0, 0)
+            return
+        
+        pixmap_rect = self.display_pixmap.rect()
+        widget_rect = self.rect()
+        
+        # Если изображение меньше виджета, сбрасываем pan_offset
+        if pixmap_rect.width() <= widget_rect.width() and pixmap_rect.height() <= widget_rect.height():
+            self.pan_offset = QPoint(0, 0)
+            return
+        
+        # Базовое смещение (центрирование)
+        base_x = (widget_rect.width() - pixmap_rect.width()) // 2
+        base_y = (widget_rect.height() - pixmap_rect.height()) // 2
+        
+        # Ограничиваем по горизонтали
+        if pixmap_rect.width() > widget_rect.width():
+            # Финальная позиция: x = base_x + pan_offset.x()
+            # Ограничения: 0 <= x <= widget_width - pixmap_width
+            # Отсюда: -base_x <= pan_offset.x() <= widget_width - pixmap_width - base_x
+            # Когда base_x отрицательный (изображение больше виджета):
+            # -base_x положительный (показывает левый край)
+            # widget_width - pixmap_width - base_x отрицательный (показывает правый край)
+            min_x = widget_rect.width() - pixmap_rect.width() - base_x  # Минимальное значение (показывает правый край)
+            max_x = -base_x  # Максимальное значение (показывает левый край)
+            self.pan_offset.setX(max(min_x, min(self.pan_offset.x(), max_x)))
+        else:
+            # Изображение меньше виджета по ширине - не позволяем панорамирование
+            self.pan_offset.setX(0)
+        
+        # Ограничиваем по вертикали
+        if pixmap_rect.height() > widget_rect.height():
+            # Финальная позиция: y = base_y + pan_offset.y()
+            # Ограничения: 0 <= y <= widget_height - pixmap_height
+            # Отсюда: -base_y <= pan_offset.y() <= widget_height - pixmap_height - base_y
+            # Когда base_y отрицательный (изображение больше виджета):
+            # -base_y положительный (показывает верхний край)
+            # widget_height - pixmap_height - base_y отрицательный (показывает нижний край)
+            min_y = widget_rect.height() - pixmap_rect.height() - base_y  # Минимальное значение (показывает нижний край)
+            max_y = -base_y  # Максимальное значение (показывает верхний край)
+            self.pan_offset.setY(max(min_y, min(self.pan_offset.y(), max_y)))
+        else:
+            # Изображение меньше виджета по высоте - не позволяем панорамирование
+            self.pan_offset.setY(0)
+    
     def paintEvent(self, event):
         """Отрисовка изображения и bounding boxes."""
         painter = QPainter(self)
@@ -1823,11 +1871,21 @@ class ImageDisplayWidget(QWidget):
         
         # Рисуем изображение
         if self.display_pixmap:
+            # Ограничиваем pan_offset перед отрисовкой
+            self.constrain_pan_offset()
+            
             # Центрируем изображение и применяем смещение панорамирования
             pixmap_rect = self.display_pixmap.rect()
             widget_rect = self.rect()
-            x = (widget_rect.width() - pixmap_rect.width()) // 2 + self.pan_offset.x()
-            y = (widget_rect.height() - pixmap_rect.height()) // 2 + self.pan_offset.y()
+            # Если изображение меньше виджета, не применяем pan_offset (чтобы избежать пустых полей)
+            if pixmap_rect.width() <= widget_rect.width() and pixmap_rect.height() <= widget_rect.height():
+                # Изображение меньше виджета - центрируем без pan_offset
+                x = (widget_rect.width() - pixmap_rect.width()) // 2
+                y = (widget_rect.height() - pixmap_rect.height()) // 2
+            else:
+                # Изображение больше виджета - применяем pan_offset для панорамирования
+                x = (widget_rect.width() - pixmap_rect.width()) // 2 + self.pan_offset.x()
+                y = (widget_rect.height() - pixmap_rect.height()) // 2 + self.pan_offset.y()
             painter.drawPixmap(x, y, self.display_pixmap)
             self.image_offset = QPoint(x, y)
         else:
@@ -2174,6 +2232,8 @@ class ImageDisplayWidget(QWidget):
             dy = current_pos.y() - self.pan_start_pos.y()
             self.pan_offset.setX(self.pan_offset.x() + dx)
             self.pan_offset.setY(self.pan_offset.y() + dy)
+            # Ограничиваем pan_offset, чтобы изображение не выходило за границы
+            self.constrain_pan_offset()
             self.pan_start_pos = current_pos
             self.update()
             # Обновляем scrollbars
@@ -2186,6 +2246,8 @@ class ImageDisplayWidget(QWidget):
             dy = current_pos.y() - self.pan_start_pos.y()
             self.pan_offset.setX(self.pan_offset.x() + dx)
             self.pan_offset.setY(self.pan_offset.y() + dy)
+            # Ограничиваем pan_offset, чтобы изображение не выходило за границы
+            self.constrain_pan_offset()
             self.pan_start_pos = current_pos
             self.update()
             # Обновляем scrollbars
@@ -2582,6 +2644,8 @@ class ImageMarkingWindow(QWidget):
             h_scrollbar.setValue(int(scroll_value))
             h_scrollbar.setVisible(True)
         else:
+            # Если изображение меньше viewport, сбрасываем горизонтальный pan_offset
+            self.image_widget.pan_offset.setX(0)
             h_scrollbar.setMaximum(0)
             h_scrollbar.setVisible(False)
         
@@ -2598,6 +2662,8 @@ class ImageMarkingWindow(QWidget):
             v_scrollbar.setValue(int(scroll_value))
             v_scrollbar.setVisible(True)
         else:
+            # Если изображение меньше viewport, сбрасываем вертикальный pan_offset
+            self.image_widget.pan_offset.setY(0)
             v_scrollbar.setMaximum(0)
             v_scrollbar.setVisible(False)
         
@@ -2656,12 +2722,22 @@ class ImageMarkingWindow(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
             
+            # Проверяем, если изображение стало меньше виджета, сбрасываем pan_offset сразу
+            # (чтобы избежать пустых полей при уменьшении)
+            if hasattr(self, 'scroll_area') and hasattr(self.scroll_area, 'viewport'):
+                viewport_size = self.scroll_area.viewport().size()
+                if scaled_width <= viewport_size.width() and scaled_height <= viewport_size.height():
+                    self.image_widget.pan_offset = QPoint(0, 0)
+            
             # Устанавливаем изображение в виджет
             self.image_widget.set_image(scaled_pixmap)
             
-            # Обновляем scrollbars после установки изображения
+            # Обновляем scrollbars после установки изображения (сбросит pan_offset если нужно)
             # Используем QTimer для отложенного обновления после того, как виджет обновится
-            QTimer.singleShot(10, self.update_scrollbars)
+            def update_scrollbars_and_image():
+                self.update_scrollbars()
+                self.image_widget.update()
+            QTimer.singleShot(10, update_scrollbars_and_image)
             
         except Exception as e:
             error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
