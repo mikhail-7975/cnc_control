@@ -107,11 +107,13 @@ class MainWindowControllerV2(QMainWindow):
         # Reference to marking window to prevent garbage collection
         self.marking_window = None
         
-        # Etalon image display label
-        self.etalon_image_label = QLabel(self.ui.display_etalon_image_widget)
-        self.etalon_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.etalon_image_label.setScaledContents(False)
-        self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        # Etalon image display widget with markup support
+        self.etalon_image_widget = ImageDisplayWidget(self.ui.display_etalon_image_widget)
+        self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
+        # Store reference to main window for bbox updates and auto-save
+        self.etalon_image_widget.main_window_ref = self
+        # Enable focus for keyboard events
+        self.etalon_image_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.clear_etalon_display()
 
         # Connect signals
@@ -160,7 +162,12 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.load_etalon_images_button.clicked.connect(self.load_etalon_images)
         self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
         self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
-        self.ui.mark_image_button.clicked.connect(self.open_mark_image_window)
+        # Hide the markup button - markup is now done directly on preview
+        self.ui.mark_image_button.setVisible(False)
+        # Connect keyboard shortcuts for saving bboxes
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        self.save_bboxes_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.save_bboxes_shortcut.activated.connect(self.save_current_etalon_bboxes)
         
         # Inspection buttons
         self.ui.load_control_photo_pushButton.clicked.connect(self.load_control_photo)
@@ -421,6 +428,10 @@ class MainWindowControllerV2(QMainWindow):
             self.current_etalon_index = len(self.etalon_images) - 1
         
         try:
+            # Save bboxes for previous image before switching
+            if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+                self.save_current_etalon_bboxes()
+            
             image = self.etalon_images[self.current_etalon_index]
             # Конвертируем BGR в RGB для Qt
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -437,9 +448,13 @@ class MainWindowControllerV2(QMainWindow):
                 Qt.TransformationMode.SmoothTransformation
             )
             
-            self.etalon_image_label.setPixmap(scaled_pixmap)
-            self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+            # Set the pixmap in the ImageDisplayWidget
+            self.etalon_image_widget.set_image(scaled_pixmap)
+            self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
             self.ui.display_etalon_image_widget.setStyleSheet("")
+            
+            # Load bboxes for the current image
+            self.load_current_etalon_bboxes()
             
             self.update_etalon_image_label()
         except Exception as e:
@@ -472,48 +487,168 @@ class MainWindowControllerV2(QMainWindow):
 
     def clear_etalon_display(self):
         """Очистить отображение эталонного изображения."""
-        self.etalon_image_label.clear()
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.set_image(None)
+            self.etalon_image_widget.bounding_boxes = []
+            self.etalon_image_widget.update()
         self.ui.display_etalon_image_widget.setStyleSheet("background-color: black;")
-        self.etalon_image_label.move(0, 0)
-        self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.move(0, 0)
+            self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
 
     def open_mark_image_window(self):
-        """Открыть новое окно для разметки изображения."""
-        if not self.etalon_images or self.current_etalon_index < 0:
-            self.show_error("Нет изображения для разметки. Загрузите эталонные изображения.")
+        """Открыть новое окно для разметки изображения. DEPRECATED - markup is now done directly on preview."""
+        # This method is kept for backward compatibility but is no longer used
+        # Markup is now done directly on the preview
+        pass
+    
+    def get_current_etalon_image_name(self):
+        """Получить имя текущего эталонного изображения."""
+        if self.current_etalon_index < 0 or not self.etalon_images:
+            return None
+        if self.current_etalon_index < len(self.etalon_image_names):
+            return self.etalon_image_names[self.current_etalon_index]
+        else:
+            # Fallback на номер, если имя недоступно
+            return f"image_{self.current_etalon_index + 1}"
+    
+    def get_etalon_bboxes_file_path(self):
+        """Получить путь к единому файлу для сохранения всех bboxes."""
+        project_root = Path(__file__).parent.parent.parent
+        markup_dir = project_root / "markup_info"
+        markup_dir.mkdir(exist_ok=True)
+        return markup_dir / "bboxes.json"
+    
+    def save_current_etalon_bboxes(self):
+        """Сохранить bboxes текущего эталонного изображения в JSON файл."""
+        if not hasattr(self, 'etalon_image_widget') or not self.etalon_images or self.current_etalon_index < 0:
             return
         
         try:
-            # Получаем текущее изображение
-            current_image = self.etalon_images[self.current_etalon_index]
+            bboxes_file = self.get_etalon_bboxes_file_path()
+            bboxes = self.etalon_image_widget.bounding_boxes
             
-            # Если окно уже открыто, просто активируем его
-            if self.marking_window is not None and self.marking_window.isVisible():
-                self.marking_window.raise_()
-                self.marking_window.activateWindow()
+            # Загружаем существующие данные, если файл есть
+            all_bboxes_data = {}
+            if bboxes_file.exists():
+                try:
+                    with open(bboxes_file, 'r', encoding='utf-8') as f:
+                        all_bboxes_data = json.load(f)
+                except:
+                    all_bboxes_data = {}
+            
+            # Получаем имя текущего изображения
+            image_name = self.get_current_etalon_image_name()
+            if not image_name:
                 return
             
-            # Получаем имя изображения
-            if self.current_etalon_index < len(self.etalon_image_names):
-                image_name = self.etalon_image_names[self.current_etalon_index]
-            else:
-                # Fallback на номер, если имя недоступно
-                image_name = f"image_{self.current_etalon_index + 1}"
+            # Получаем оригинальный размер изображения для конвертации координат
+            current_image = self.etalon_images[self.current_etalon_index]
+            h, w = current_image.shape[:2]
             
-            # Создаем и показываем новое окно как отдельное окно (не дочернее)
-            self.marking_window = ImageMarkingWindow(current_image, image_name=image_name, parent=None)
-            # Сохраняем ссылку на главное окно в окне разметки для очистки при закрытии
-            self.marking_window.main_window_ref = self
+            # Получаем размер отображаемого pixmap
+            if not self.etalon_image_widget.display_pixmap:
+                return
+            display_pixmap = self.etalon_image_widget.display_pixmap
+            display_w = display_pixmap.width()
+            display_h = display_pixmap.height()
             
-            # Устанавливаем размер окна такой же, как у главного окна
-            main_window_size = self.size()
-            self.marking_window.resize(main_window_size)
+            # Вычисляем масштаб
+            scale_x = display_w / w
+            scale_y = display_h / h
+            scale = min(scale_x, scale_y)  # KeepAspectRatio uses min
             
-            self.marking_window.show()
-            self.marking_window.raise_()  # Поднимаем окно на передний план
-            self.marking_window.activateWindow()  # Активируем окно
+            # Конвертируем текущие bboxes в список словарей для JSON
+            # Конвертируем координаты из масштабированного пространства в оригинальное
+            bboxes_data = []
+            for box in bboxes:
+                x1, y1, x2, y2, angle, selected, name = box
+                # Конвертируем координаты обратно в оригинальный размер изображения
+                orig_x1 = x1 / scale
+                orig_y1 = y1 / scale
+                orig_x2 = x2 / scale
+                orig_y2 = y2 / scale
+                bboxes_data.append({
+                    'x1': float(orig_x1),
+                    'y1': float(orig_y1),
+                    'x2': float(orig_x2),
+                    'y2': float(orig_y2),
+                    'angle': float(angle),
+                    'name': name if name else ""
+                })
+            
+            # Обновляем данные для текущего изображения
+            all_bboxes_data[image_name] = bboxes_data
+            
+            # Сохраняем все данные обратно в JSON
+            with open(bboxes_file, 'w', encoding='utf-8') as f:
+                json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
+            print(f"Ошибка при сохранении bboxes: {str(e)}")
+    
+    def load_current_etalon_bboxes(self):
+        """Загрузить bboxes из JSON файла для текущего эталонного изображения."""
+        if not hasattr(self, 'etalon_image_widget') or not self.etalon_images or self.current_etalon_index < 0:
+            return
+        
+        try:
+            bboxes_file = self.get_etalon_bboxes_file_path()
+            
+            if not bboxes_file.exists():
+                return  # Нет сохраненных bboxes
+            
+            # Загружаем из JSON
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            # Получаем имя текущего изображения
+            image_name = self.get_current_etalon_image_name()
+            if not image_name or image_name not in all_bboxes_data:
+                return  # Нет bboxes для этого изображения
+            
+            bboxes_data = all_bboxes_data[image_name]
+            
+            # Получаем оригинальный размер изображения для конвертации координат
+            current_image = self.etalon_images[self.current_etalon_index]
+            h, w = current_image.shape[:2]
+            
+            # Получаем размер отображаемого pixmap
+            if not self.etalon_image_widget.display_pixmap:
+                return
+            display_pixmap = self.etalon_image_widget.display_pixmap
+            display_w = display_pixmap.width()
+            display_h = display_pixmap.height()
+            
+            # Вычисляем масштаб
+            scale_x = display_w / w
+            scale_y = display_h / h
+            scale = min(scale_x, scale_y)  # KeepAspectRatio uses min
+            
+            # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
+            # Конвертируем координаты из оригинального пространства в текущее масштабированное
+            loaded_bboxes = []
+            for bbox_data in bboxes_data:
+                # Конвертируем координаты из оригинального размера в текущий масштаб
+                scaled_x1 = bbox_data['x1'] * scale
+                scaled_y1 = bbox_data['y1'] * scale
+                scaled_x2 = bbox_data['x2'] * scale
+                scaled_y2 = bbox_data['y2'] * scale
+                loaded_bboxes.append((
+                    scaled_x1,
+                    scaled_y1,
+                    scaled_x2,
+                    scaled_y2,
+                    bbox_data.get('angle', 0.0),
+                    False,  # selected = False по умолчанию
+                    bbox_data.get('name', '')
+                ))
+            
+            # Устанавливаем загруженные bboxes
+            self.etalon_image_widget.bounding_boxes = loaded_bboxes
+            self.etalon_image_widget.update()  # Обновляем отображение
+            
+        except Exception as e:
+            print(f"Ошибка при загрузке bboxes: {str(e)}")
 
     # === Inspection handlers ===
     
@@ -1337,8 +1472,8 @@ class MainWindowControllerV2(QMainWindow):
         """Обработка изменения размера главного окна."""
         if self.image_label is not None:
             self.image_label.resize(self.ui.image_displayer.size())
-        if self.etalon_image_label is not None:
-            self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget is not None:
+            self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
             # Перерисовываем изображение при изменении размера
             if self.etalon_images and self.current_etalon_index >= 0:
                 self.display_current_etalon_image()
@@ -1926,6 +2061,10 @@ class ImageDisplayWidget(QWidget):
                     if hasattr(self, 'marking_window') and self.marking_window:
                         self.marking_window.update_bbox_list()
                     
+                    # Auto-save if used in preview (has main_window_ref)
+                    if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                        self.main_window_ref.save_current_etalon_bboxes()
+                    
                     # Автоматически показываем диалог для ввода имени нового бокса
                     self._show_name_dialog_for_selected_box()
                 
@@ -1985,6 +2124,9 @@ class ImageDisplayWidget(QWidget):
                 # Обновляем список bboxes в окне разметки
                 if hasattr(self, 'marking_window') and self.marking_window:
                     self.marking_window.update_bbox_list()
+                # Auto-save if used in preview (has main_window_ref)
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
     
     def keyPressEvent(self, event):
         """Обработка нажатия клавиш."""
@@ -2004,6 +2146,9 @@ class ImageDisplayWidget(QWidget):
                 # Обновляем список bboxes в окне разметки
                 if hasattr(self, 'marking_window') and self.marking_window:
                     self.marking_window.update_bbox_list()
+                # Auto-save if used in preview (has main_window_ref)
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
         elif event.key() == Qt.Key.Key_Left:
             # Стрелка влево - панорамирование влево
             self.pan_offset.setX(self.pan_offset.x() + 20)
