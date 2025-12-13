@@ -569,14 +569,12 @@ class MainWindowControllerV2(QMainWindow):
         pass
     
     def get_current_etalon_image_name(self):
-        """Получить уникальное имя текущего эталонного изображения для сохранения bboxes."""
+        """Получить имя текущего эталонного изображения для сохранения bboxes."""
         if self.current_etalon_index < 0 or not self.etalon_images:
             return None
-        # Use index to ensure uniqueness even if filenames are the same
         if self.current_etalon_index < len(self.etalon_image_names):
-            # Include index in the key to ensure each image has its own bboxes
-            base_name = self.etalon_image_names[self.current_etalon_index]
-            return f"{self.current_etalon_index}_{base_name}"
+            # Use the image name directly (e.g., "photo_0")
+            return self.etalon_image_names[self.current_etalon_index]
         else:
             # Fallback на номер, если имя недоступно
             return f"image_{self.current_etalon_index}"
@@ -657,19 +655,19 @@ class MainWindowControllerV2(QMainWindow):
             with open(bboxes_file, 'r', encoding='utf-8') as f:
                 all_bboxes_data = json.load(f)
             
-            # Получаем имя текущего изображения (с индексом для уникальности)
+            # Получаем имя текущего изображения
             image_name = self.get_current_etalon_image_name()
             if not image_name:
                 return
             
-            # Try new format first (with index)
+            # Try current format first (image name only)
             bboxes_data = None
             if image_name in all_bboxes_data:
                 bboxes_data = all_bboxes_data[image_name]
             else:
-                # Fallback to old format (without index) for backward compatibility
+                # Fallback to old format (with index prefix) for backward compatibility
                 if self.current_etalon_index < len(self.etalon_image_names):
-                    old_name = self.etalon_image_names[self.current_etalon_index]
+                    old_name = f"{self.current_etalon_index}_{self.etalon_image_names[self.current_etalon_index]}"
                     if old_name in all_bboxes_data:
                         bboxes_data = all_bboxes_data[old_name]
             
