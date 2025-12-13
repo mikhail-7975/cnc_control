@@ -114,6 +114,15 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_image_widget.main_window_ref = self
         # Enable focus for keyboard events
         self.etalon_image_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        
+        # Zoom settings for etalon preview
+        self.etalon_zoom_scale = 1.0
+        self.etalon_min_zoom = 0.1
+        self.etalon_max_zoom = 10.0
+        self.etalon_zoom_step = 0.1
+        self.etalon_initial_zoom_calculated = False
+        self.etalon_original_pixmap = None  # Store original unscaled pixmap
+        
         self.clear_etalon_display()
 
         # Connect signals
@@ -164,10 +173,17 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
         # Hide the markup button - markup is now done directly on preview
         self.ui.mark_image_button.setVisible(False)
-        # Connect keyboard shortcuts for saving bboxes
+        # Connect keyboard shortcuts for saving bboxes and zooming
         from PyQt6.QtGui import QShortcut, QKeySequence
         self.save_bboxes_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         self.save_bboxes_shortcut.activated.connect(self.save_current_etalon_bboxes)
+        # Zoom shortcuts
+        self.zoom_in_shortcut = QShortcut(QKeySequence("Ctrl+="), self)
+        self.zoom_in_shortcut.activated.connect(self.etalon_zoom_in)
+        self.zoom_in_plus_shortcut = QShortcut(QKeySequence("Ctrl++"), self)
+        self.zoom_in_plus_shortcut.activated.connect(self.etalon_zoom_in)
+        self.zoom_out_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)
+        self.zoom_out_shortcut.activated.connect(self.etalon_zoom_out)
         
         # Inspection buttons
         self.ui.load_control_photo_pushButton.clicked.connect(self.load_control_photo)
@@ -410,6 +426,9 @@ class MainWindowControllerV2(QMainWindow):
                 self.etalon_images = loaded_images
                 self.etalon_image_names = loaded_names
                 self.current_etalon_index = 0
+                # Reset zoom when loading new images
+                self.etalon_initial_zoom_calculated = False
+                self.etalon_zoom_scale = 1.0
                 self.display_current_etalon_image()
                 print(f"Загружено {len(self.etalon_images)} эталонных изображений")
             else:
@@ -432,6 +451,9 @@ class MainWindowControllerV2(QMainWindow):
             if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
                 self.save_current_etalon_bboxes()
             
+            # Reset zoom calculation for new image (will recalculate initial fit)
+            self.etalon_initial_zoom_calculated = False
+            
             image = self.etalon_images[self.current_etalon_index]
             # Конвертируем BGR в RGB для Qt
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -440,10 +462,31 @@ class MainWindowControllerV2(QMainWindow):
             qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image)
             
-            # Масштабируем изображение под размер виджета
+            # Store original pixmap for zooming
+            self.etalon_original_pixmap = pixmap
+            
+            # Calculate initial zoom scale to fit widget (only on first display)
+            if not self.etalon_initial_zoom_calculated:
+                widget_width = self.ui.display_etalon_image_widget.width()
+                widget_height = self.ui.display_etalon_image_widget.height()
+                
+                if widget_width > 0 and widget_height > 0 and w > 0 and h > 0:
+                    scale_x = widget_width / w
+                    scale_y = widget_height / h
+                    # Use smaller scale to fit image completely
+                    self.etalon_zoom_scale = min(scale_x, scale_y) * 0.95  # 0.95 for small margin
+                    # Limit initial zoom scale to reasonable bounds
+                    self.etalon_zoom_scale = max(self.etalon_min_zoom, min(self.etalon_zoom_scale, self.etalon_max_zoom))
+                    self.etalon_initial_zoom_calculated = True
+            
+            # Apply zoom scaling
+            scaled_width = int(w * self.etalon_zoom_scale)
+            scaled_height = int(h * self.etalon_zoom_scale)
+            
+            # Scale pixmap
             scaled_pixmap = pixmap.scaled(
-                self.ui.display_etalon_image_widget.width(),
-                self.ui.display_etalon_image_widget.height(),
+                scaled_width,
+                scaled_height,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
@@ -453,7 +496,7 @@ class MainWindowControllerV2(QMainWindow):
             self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
             self.ui.display_etalon_image_widget.setStyleSheet("")
             
-            # Load bboxes for the current image
+            # Load bboxes for the current image (will be scaled appropriately)
             self.load_current_etalon_bboxes()
             
             self.update_etalon_image_label()
@@ -542,21 +585,8 @@ class MainWindowControllerV2(QMainWindow):
             if not image_name:
                 return
             
-            # Получаем оригинальный размер изображения для конвертации координат
-            current_image = self.etalon_images[self.current_etalon_index]
-            h, w = current_image.shape[:2]
-            
-            # Получаем размер отображаемого pixmap
-            if not self.etalon_image_widget.display_pixmap:
-                return
-            display_pixmap = self.etalon_image_widget.display_pixmap
-            display_w = display_pixmap.width()
-            display_h = display_pixmap.height()
-            
-            # Вычисляем масштаб
-            scale_x = display_w / w
-            scale_y = display_h / h
-            scale = min(scale_x, scale_y)  # KeepAspectRatio uses min
+            # Use current zoom scale for coordinate conversion
+            scale = self.etalon_zoom_scale
             
             # Конвертируем текущие bboxes в список словарей для JSON
             # Конвертируем координаты из масштабированного пространства в оригинальное
@@ -608,21 +638,8 @@ class MainWindowControllerV2(QMainWindow):
             
             bboxes_data = all_bboxes_data[image_name]
             
-            # Получаем оригинальный размер изображения для конвертации координат
-            current_image = self.etalon_images[self.current_etalon_index]
-            h, w = current_image.shape[:2]
-            
-            # Получаем размер отображаемого pixmap
-            if not self.etalon_image_widget.display_pixmap:
-                return
-            display_pixmap = self.etalon_image_widget.display_pixmap
-            display_w = display_pixmap.width()
-            display_h = display_pixmap.height()
-            
-            # Вычисляем масштаб
-            scale_x = display_w / w
-            scale_y = display_h / h
-            scale = min(scale_x, scale_y)  # KeepAspectRatio uses min
+            # Use current zoom scale for coordinate conversion
+            scale = self.etalon_zoom_scale
             
             # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
             # Конвертируем координаты из оригинального пространства в текущее масштабированное
@@ -649,6 +666,74 @@ class MainWindowControllerV2(QMainWindow):
             
         except Exception as e:
             print(f"Ошибка при загрузке bboxes: {str(e)}")
+    
+    def etalon_zoom_in(self):
+        """Увеличить масштаб эталонного изображения."""
+        if not hasattr(self, 'etalon_original_pixmap') or self.etalon_original_pixmap is None:
+            return
+        
+        old_scale = self.etalon_zoom_scale
+        self.etalon_zoom_scale = min(self.etalon_zoom_scale + self.etalon_zoom_step, self.etalon_max_zoom)
+        if old_scale != self.etalon_zoom_scale:
+            self._update_etalon_bboxes_scale(old_scale, self.etalon_zoom_scale)
+            self._redisplay_etalon_with_zoom()
+    
+    def etalon_zoom_out(self):
+        """Уменьшить масштаб эталонного изображения."""
+        if not hasattr(self, 'etalon_original_pixmap') or self.etalon_original_pixmap is None:
+            return
+        
+        old_scale = self.etalon_zoom_scale
+        self.etalon_zoom_scale = max(self.etalon_zoom_scale - self.etalon_zoom_step, self.etalon_min_zoom)
+        if old_scale != self.etalon_zoom_scale:
+            self._update_etalon_bboxes_scale(old_scale, self.etalon_zoom_scale)
+            self._redisplay_etalon_with_zoom()
+    
+    def _update_etalon_bboxes_scale(self, old_scale, new_scale):
+        """Обновить координаты bboxes при изменении масштаба."""
+        if old_scale == 0 or new_scale == 0:
+            return
+        scale_factor = new_scale / old_scale
+        bboxes = self.etalon_image_widget.bounding_boxes
+        updated_bboxes = []
+        for box in bboxes:
+            x1, y1, x2, y2, angle, selected, name = box
+            updated_bboxes.append((
+                x1 * scale_factor,
+                y1 * scale_factor,
+                x2 * scale_factor,
+                y2 * scale_factor,
+                angle,
+                selected,
+                name
+            ))
+        self.etalon_image_widget.bounding_boxes = updated_bboxes
+        self.etalon_image_widget.update()
+    
+    def _redisplay_etalon_with_zoom(self):
+        """Перерисовать эталонное изображение с текущим масштабом."""
+        if not hasattr(self, 'etalon_original_pixmap') or self.etalon_original_pixmap is None:
+            return
+        
+        pixmap = self.etalon_original_pixmap
+        w = pixmap.width()
+        h = pixmap.height()
+        
+        # Apply zoom scaling
+        scaled_width = int(w * self.etalon_zoom_scale)
+        scaled_height = int(h * self.etalon_zoom_scale)
+        
+        # Scale pixmap
+        scaled_pixmap = pixmap.scaled(
+            scaled_width,
+            scaled_height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        
+        # Set the pixmap in the ImageDisplayWidget
+        self.etalon_image_widget.set_image(scaled_pixmap)
+        self.etalon_image_widget.update()
 
     # === Inspection handlers ===
     
@@ -2201,6 +2286,16 @@ class ImageDisplayWidget(QWidget):
                 elif delta < 0:
                     # Прокрутка вниз - уменьшение
                     self.marking_window.zoom_out()
+                event.accept()
+                return
+            # Если используется в preview (has main_window_ref), вызываем методы масштабирования
+            elif hasattr(self, 'main_window_ref') and self.main_window_ref:
+                if delta > 0:
+                    # Прокрутка вверх - увеличение
+                    self.main_window_ref.etalon_zoom_in()
+                elif delta < 0:
+                    # Прокрутка вниз - уменьшение
+                    self.main_window_ref.etalon_zoom_out()
                 event.accept()
                 return
         
