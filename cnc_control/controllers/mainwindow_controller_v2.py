@@ -22,7 +22,7 @@ import re
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog,
-    QScrollArea, QGridLayout, QTreeView
+    QScrollArea, QGridLayout, QTreeView, QCheckBox
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence, QStandardItemModel, QStandardItem, QBrush
@@ -144,6 +144,9 @@ class MainWindowControllerV2(QMainWindow):
         
         # Reference to marking window to prevent garbage collection
         self.marking_window = None
+        
+        # Preference: don't ask for delete confirmation
+        self.skip_delete_confirmation = False
         
         # Etalon image display widget with markup support
         self.etalon_image_widget = ImageDisplayWidget(self.ui.display_etalon_image_widget)
@@ -1004,18 +1007,32 @@ class MainWindowControllerV2(QMainWindow):
         image_item = item.parent()
         image_name = image_item.text()
         
-        # Подтверждение удаления
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Icon.Question)
-        msg_box.setWindowTitle("Удаление компонента")
-        msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}' из изображения '{image_name}'?")
-        btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
-        btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
-        msg_box.setDefaultButton(btn_no)
-        msg_box.exec()
-        
-        if msg_box.clickedButton() != btn_yes:
-            return
+        # Проверяем, нужно ли показывать подтверждение
+        if self.skip_delete_confirmation:
+            # Пропускаем диалог, сразу удаляем
+            pass
+        else:
+            # Подтверждение удаления
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Question)
+            msg_box.setWindowTitle("Удаление компонента")
+            msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}' из изображения '{image_name}'?")
+            
+            # Добавляем чекбокс "Больше не спрашивать"
+            checkbox = QCheckBox("Больше не спрашивать")
+            msg_box.setCheckBox(checkbox)
+            
+            btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
+            btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_no)
+            msg_box.exec()
+            
+            # Сохраняем настройку, если чекбокс отмечен
+            if checkbox.isChecked():
+                self.skip_delete_confirmation = True
+            
+            if msg_box.clickedButton() != btn_yes:
+                return
         
         # Загружаем bboxes для этого изображения из файла
         bboxes_file = self.get_etalon_bboxes_file_path()
@@ -2758,6 +2775,22 @@ class ImageDisplayWidget(QWidget):
         box = self.bounding_boxes[self.selected_box_index]
         x1, y1, x2, y2, angle, selected, name = box
         
+        # Получаем главное окно для доступа к настройке
+        main_window = None
+        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+            main_window = self.main_window_ref
+        else:
+            parent = self.parent()
+            while parent and not isinstance(parent, QMainWindow):
+                parent = parent.parent()
+            if isinstance(parent, QMainWindow):
+                main_window = parent
+        
+        # Проверяем, нужно ли показывать подтверждение
+        if main_window and hasattr(main_window, 'skip_delete_confirmation') and main_window.skip_delete_confirmation:
+            # Пропускаем диалог, сразу подтверждаем удаление
+            return True
+        
         # Получаем родительское окно для показа диалога
         parent = self.parent()
         while parent and not isinstance(parent, QMainWindow):
@@ -2776,10 +2809,18 @@ class ImageDisplayWidget(QWidget):
         component_name = name if name and name.strip() else "неназванный компонент"
         msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}'?")
         
+        # Добавляем чекбокс "Больше не спрашивать"
+        checkbox = QCheckBox("Больше не спрашивать")
+        msg_box.setCheckBox(checkbox)
+        
         btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
         btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
         msg_box.setDefaultButton(btn_no)
         msg_box.exec()
+        
+        # Сохраняем настройку, если чекбокс отмечен
+        if checkbox.isChecked() and main_window:
+            main_window.skip_delete_confirmation = True
         
         return msg_box.clickedButton() == btn_yes
     
