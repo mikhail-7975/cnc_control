@@ -874,6 +874,19 @@ class MainWindowControllerV2(QMainWindow):
             light_red = QColor(255, 200, 200)  # Light red color
             light_red_brush = QBrush(light_red)
             
+            # Зеленый цвет для выбранного компонента
+            green = QColor(200, 255, 200)  # Light green color
+            green_brush = QBrush(green)
+            
+            # Получаем информацию о выбранном bbox (если есть)
+            selected_image_name = None
+            selected_bbox_index = None
+            if hasattr(self, 'etalon_image_widget') and hasattr(self.etalon_image_widget, 'selected_box_index'):
+                if (self.etalon_image_widget.selected_box_index is not None and 
+                    self.etalon_image_widget.selected_box_index < len(self.etalon_image_widget.bounding_boxes)):
+                    selected_image_name = self.get_current_etalon_image_name()
+                    selected_bbox_index = self.etalon_image_widget.selected_box_index
+            
             # Фильтруем только изображения из загруженных
             for image_name in sorted(all_bboxes_data.keys()):
                 # Пропускаем изображения, которые не загружены
@@ -889,14 +902,21 @@ class MainWindowControllerV2(QMainWindow):
                 has_components = False
                 unnamed_counter = 1  # Счетчик для неназванных компонентов
                 
-                for bbox_data in bboxes_data:
+                for bbox_index, bbox_data in enumerate(bboxes_data):
                     component_name = bbox_data.get('name', '').strip()
+                    
+                    # Проверяем, является ли этот компонент выбранным
+                    is_selected = (image_name == selected_image_name and 
+                                  bbox_index == selected_bbox_index)
                     
                     if component_name:
                         # Компонент с именем
                         has_components = True
                         component_item = QStandardItem(component_name)
                         component_item.setEditable(False)
+                        # Применяем зеленый фон, если выбран
+                        if is_selected:
+                            component_item.setBackground(green_brush)
                         # Добавляем как дочерний элемент
                         image_item.appendRow(component_item)
                     else:
@@ -905,8 +925,11 @@ class MainWindowControllerV2(QMainWindow):
                         unnamed_name = f"Unnamed{unnamed_counter}"
                         component_item = QStandardItem(unnamed_name)
                         component_item.setEditable(False)
-                        # Применяем светло-красный фон
-                        component_item.setBackground(light_red_brush)
+                        # Применяем фон: зеленый если выбран, иначе светло-красный
+                        if is_selected:
+                            component_item.setBackground(green_brush)
+                        else:
+                            component_item.setBackground(light_red_brush)
                         # Добавляем как дочерний элемент
                         image_item.appendRow(component_item)
                         unnamed_counter += 1
@@ -2420,6 +2443,10 @@ class ImageDisplayWidget(QWidget):
                     if hasattr(self, 'marking_window') and self.marking_window:
                         self.marking_window.update_bbox_list()
                     
+                    # Обновляем выделение в списке компонентов
+                    if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                        self.main_window_ref.update_component_list()
+                    
                     # Начинаем перетаскивание
                     self.dragging_box = True
                     self.drag_type = interaction_type
@@ -2434,6 +2461,9 @@ class ImageDisplayWidget(QWidget):
                     self.drawing_box = True
                     self.selected_box_index = None
                     self.dragging_box = False
+                    # Обновляем выделение в списке компонентов (снимаем выделение)
+                    if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                        self.main_window_ref.update_component_list()
                     self.update()  # Update to show the initial box (even if zero size)
         
         elif event.button() == Qt.MouseButton.RightButton:
@@ -2849,6 +2879,8 @@ class ImageDisplayWidget(QWidget):
                 # Auto-save if used in preview (has main_window_ref)
                 if hasattr(self, 'main_window_ref') and self.main_window_ref:
                     self.main_window_ref.save_current_etalon_bboxes()
+                    # Обновляем выделение в списке компонентов
+                    self.main_window_ref.update_component_list()
         elif event.key() == Qt.Key.Key_Left:
             # Стрелка влево - панорамирование влево
             self.pan_offset.setX(self.pan_offset.x() + 20)
