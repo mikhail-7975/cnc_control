@@ -97,7 +97,9 @@ class ComponentTreeView(QTreeView):
                     item = model.itemFromIndex(index)
                     if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
                         if self.main_window_ref:
-                            self.main_window_ref._select_bbox_from_tree(item)
+                            # Проверяем, нажат ли Ctrl для множественного выбора
+                            ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                            self.main_window_ref._select_bbox_from_tree(item, ctrl_pressed=ctrl_pressed)
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -893,14 +895,18 @@ class MainWindowControllerV2(QMainWindow):
             green = QColor(200, 255, 200)  # Light green color
             green_brush = QBrush(green)
             
-            # Получаем информацию о выбранном bbox (если есть)
+            # Получаем информацию о выбранных bboxes (если есть)
             selected_image_name = None
-            selected_bbox_index = None
-            if hasattr(self, 'etalon_image_widget') and hasattr(self.etalon_image_widget, 'selected_box_index'):
-                if (self.etalon_image_widget.selected_box_index is not None and 
-                    self.etalon_image_widget.selected_box_index < len(self.etalon_image_widget.bounding_boxes)):
+            selected_bbox_indices = set()
+            if hasattr(self, 'etalon_image_widget'):
+                if hasattr(self.etalon_image_widget, 'selected_box_indices') and self.etalon_image_widget.selected_box_indices:
                     selected_image_name = self.get_current_etalon_image_name()
-                    selected_bbox_index = self.etalon_image_widget.selected_box_index
+                    selected_bbox_indices = self.etalon_image_widget.selected_box_indices
+                elif hasattr(self.etalon_image_widget, 'selected_box_index') and self.etalon_image_widget.selected_box_index is not None:
+                    # Обратная совместимость
+                    if self.etalon_image_widget.selected_box_index < len(self.etalon_image_widget.bounding_boxes):
+                        selected_image_name = self.get_current_etalon_image_name()
+                        selected_bbox_indices = {self.etalon_image_widget.selected_box_index}
             
             # Фильтруем только изображения из загруженных
             for image_name in sorted(all_bboxes_data.keys()):
@@ -922,7 +928,7 @@ class MainWindowControllerV2(QMainWindow):
                     
                     # Проверяем, является ли этот компонент выбранным
                     is_selected = (image_name == selected_image_name and 
-                                  bbox_index == selected_bbox_index)
+                                  bbox_index in selected_bbox_indices)
                     
                     if component_name:
                         # Компонент с именем
@@ -1112,7 +1118,7 @@ class MainWindowControllerV2(QMainWindow):
         row = component_item.row()
         return row
     
-    def _select_bbox_from_tree(self, item):
+    def _select_bbox_from_tree(self, item, ctrl_pressed=False):
         """Выбрать bbox на изображении при клике на элемент в дереве компонентов."""
         if not item or not item.parent():
             return
@@ -1136,26 +1142,45 @@ class MainWindowControllerV2(QMainWindow):
                     self.display_current_etalon_image()
                     # Ждем немного, чтобы изображение и bboxes загрузились, затем выбираем bbox
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(200, lambda: self._select_bbox_by_index(component_index))
+                    QTimer.singleShot(200, lambda: self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed))
                     return
         
         # Если изображение уже текущее, сразу выбираем bbox
-        self._select_bbox_by_index(component_index)
+        self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed)
     
-    def _select_bbox_by_index(self, bbox_index):
+    def _select_bbox_by_index(self, bbox_index, ctrl_pressed=False):
         """Выбрать bbox по индексу в текущем изображении."""
         if not hasattr(self, 'etalon_image_widget'):
             return
         
         if (bbox_index is not None and 
             bbox_index < len(self.etalon_image_widget.bounding_boxes)):
-            # Устанавливаем выбранный индекс
-            self.etalon_image_widget.selected_box_index = bbox_index
+            
+            # Инициализируем selected_box_indices, если его нет
+            if not hasattr(self.etalon_image_widget, 'selected_box_indices'):
+                self.etalon_image_widget.selected_box_indices = set()
+            
+            if ctrl_pressed:
+                # Множественный выбор: добавляем/удаляем из выбора
+                if bbox_index in self.etalon_image_widget.selected_box_indices:
+                    # Удаляем из выбора
+                    self.etalon_image_widget.selected_box_indices.remove(bbox_index)
+                    if self.etalon_image_widget.selected_box_index == bbox_index:
+                        # Если это был последний выбранный, обновляем его
+                        self.etalon_image_widget.selected_box_index = next(iter(self.etalon_image_widget.selected_box_indices)) if self.etalon_image_widget.selected_box_indices else None
+                else:
+                    # Добавляем к выбору
+                    self.etalon_image_widget.selected_box_indices.add(bbox_index)
+                    self.etalon_image_widget.selected_box_index = bbox_index
+            else:
+                # Одиночный выбор: очищаем предыдущий выбор
+                self.etalon_image_widget.selected_box_indices = {bbox_index}
+                self.etalon_image_widget.selected_box_index = bbox_index
             
             # Обновляем флаг выбранности для всех bboxes
             for i, box in enumerate(self.etalon_image_widget.bounding_boxes):
                 x1, y1, x2, y2, angle, _, name = box
-                self.etalon_image_widget.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == bbox_index, name)
+                self.etalon_image_widget.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.etalon_image_widget.selected_box_indices, name)
             
             # Обновляем отображение
             self.etalon_image_widget.update()
@@ -2176,7 +2201,8 @@ class ImageDisplayWidget(QWidget):
         self.bounding_boxes = []  # Список bounding boxes: [x1, y1, x2, y2, angle, selected, name]
         self.current_box_start = None  # Начальная точка текущего бокса
         self.drawing_box = False
-        self.selected_box_index = None
+        self.selected_box_index = None  # Для обратной совместимости (последний выбранный)
+        self.selected_box_indices = set()  # Множество индексов выбранных bboxes
         self.rotation_mode = False
         self.rotation_start_angle = 0
         self.image_offset = QPoint(0, 0)
@@ -2376,7 +2402,7 @@ class ImageDisplayWidget(QWidget):
         # Рисуем bounding boxes
         for i, box in enumerate(self.bounding_boxes):
             x1, y1, x2, y2, angle, selected, name = box
-            is_selected = (i == self.selected_box_index)
+            is_selected = (i in self.selected_box_indices) if hasattr(self, 'selected_box_indices') else (i == self.selected_box_index)
             
             # Преобразуем координаты с учетом смещения изображения
             p1 = QPoint(int(x1) + self.image_offset.x(), int(y1) + self.image_offset.y())
@@ -2473,9 +2499,14 @@ class ImageDisplayWidget(QWidget):
                     self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
                 return
             
-            if self.rotation_mode and self.selected_box_index is not None:
+            # Проверяем, есть ли выбранные bboxes для поворота
+            target_index = self.selected_box_index
+            if target_index is None and hasattr(self, 'selected_box_indices') and self.selected_box_indices:
+                target_index = next(iter(self.selected_box_indices))
+            
+            if self.rotation_mode and target_index is not None:
                 # Режим поворота
-                box = self.bounding_boxes[self.selected_box_index]
+                box = self.bounding_boxes[target_index]
                 x1, y1, x2, y2, angle, _, _ = box
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
@@ -2499,11 +2530,30 @@ class ImageDisplayWidget(QWidget):
                         break
                 
                 if clicked_box is not None:
-                    self.selected_box_index = clicked_box
-                    # Обновляем флаг выбранности
+                    # Проверяем, нажат ли Ctrl для множественного выбора
+                    ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    
+                    if ctrl_pressed:
+                        # Множественный выбор: добавляем/удаляем из выбора
+                        if clicked_box in self.selected_box_indices:
+                            # Удаляем из выбора
+                            self.selected_box_indices.remove(clicked_box)
+                            if self.selected_box_index == clicked_box:
+                                # Если это был последний выбранный, обновляем его
+                                self.selected_box_index = next(iter(self.selected_box_indices)) if self.selected_box_indices else None
+                        else:
+                            # Добавляем к выбору
+                            self.selected_box_indices.add(clicked_box)
+                            self.selected_box_index = clicked_box
+                    else:
+                        # Одиночный выбор: очищаем предыдущий выбор
+                        self.selected_box_indices = {clicked_box}
+                        self.selected_box_index = clicked_box
+                    
+                    # Обновляем флаг выбранности для всех bboxes
                     for i, box in enumerate(self.bounding_boxes):
                         x1, y1, x2, y2, angle, _, name = box
-                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box, name)
+                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.selected_box_indices, name)
                     
                     # Обновляем список bboxes в окне разметки
                     if hasattr(self, 'marking_window') and self.marking_window:
@@ -2513,23 +2563,34 @@ class ImageDisplayWidget(QWidget):
                     if hasattr(self, 'main_window_ref') and self.main_window_ref:
                         self.main_window_ref.update_component_list()
                     
-                    # Начинаем перетаскивание
-                    self.dragging_box = True
-                    self.drag_type = interaction_type
-                    self.drag_corner_index = interaction_index
-                    self.drag_start_pos = pos
-                    self.drag_start_box = self.bounding_boxes[clicked_box]
+                    # Начинаем перетаскивание только если не Ctrl+Click
+                    if not ctrl_pressed:
+                        self.dragging_box = True
+                        self.drag_type = interaction_type
+                        self.drag_corner_index = interaction_index
+                        self.drag_start_pos = pos
+                        self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
                     # Начинаем создание нового бокса (обычное поведение)
+                    # Проверяем, нажат ли Ctrl - если да, не снимаем выделение
+                    ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    if not ctrl_pressed:
+                        # Снимаем выделение только если не нажат Ctrl
+                        self.selected_box_index = None
+                        self.selected_box_indices = set()
+                        # Обновляем флаг выбранности для всех bboxes
+                        for i, box in enumerate(self.bounding_boxes):
+                            x1, y1, x2, y2, angle, _, name = box
+                            self.bounding_boxes[i] = (x1, y1, x2, y2, angle, False, name)
+                        # Обновляем выделение в списке компонентов (снимаем выделение)
+                        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                            self.main_window_ref.update_component_list()
+                    
                     self.current_box_start = pos
                     self.last_mouse_pos = pos  # Initialize last_mouse_pos to current position
                     self.drawing_box = True
-                    self.selected_box_index = None
                     self.dragging_box = False
-                    # Обновляем выделение в списке компонентов (снимаем выделение)
-                    if hasattr(self, 'main_window_ref') and self.main_window_ref:
-                        self.main_window_ref.update_component_list()
                     self.update()  # Update to show the initial box (even if zero size)
         
         elif event.button() == Qt.MouseButton.RightButton:
@@ -2865,11 +2926,22 @@ class ImageDisplayWidget(QWidget):
     
     def _confirm_delete_bbox(self):
         """Показать диалог подтверждения удаления бокса."""
-        if self.selected_box_index is None or self.selected_box_index >= len(self.bounding_boxes):
+        # Получаем выбранные bboxes
+        selected_indices = self.selected_box_indices if hasattr(self, 'selected_box_indices') and self.selected_box_indices else set()
+        if not selected_indices and self.selected_box_index is not None:
+            selected_indices = {self.selected_box_index}
+        
+        if not selected_indices:
             return False
         
-        box = self.bounding_boxes[self.selected_box_index]
-        x1, y1, x2, y2, angle, selected, name = box
+        # Формируем текст сообщения в зависимости от количества выбранных
+        if len(selected_indices) == 1:
+            box = self.bounding_boxes[next(iter(selected_indices))]
+            x1, y1, x2, y2, angle, selected, name = box
+            component_name = name if name and name.strip() else "неназванный компонент"
+            message_text = f"Вы уверены, что хотите удалить компонент '{component_name}'?"
+        else:
+            message_text = f"Вы уверены, что хотите удалить {len(selected_indices)} выбранных компонентов?"
         
         # Получаем главное окно для доступа к настройке
         main_window = None
@@ -2900,10 +2972,7 @@ class ImageDisplayWidget(QWidget):
         msg_box = QMessageBox(parent)
         msg_box.setIcon(QMessageBox.Icon.Question)
         msg_box.setWindowTitle("Удаление компонента")
-        
-        # Формируем текст сообщения
-        component_name = name if name and name.strip() else "неназванный компонент"
-        msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}'?")
+        msg_box.setText(message_text)
         
         # Добавляем чекбокс "Больше не спрашивать"
         checkbox = QCheckBox("Больше не спрашивать")
@@ -2924,19 +2993,35 @@ class ImageDisplayWidget(QWidget):
         """Обработка нажатия клавиш."""
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             # Если нажат Enter и есть выбранный бокс, открываем диалог для ввода имени
-            if self.selected_box_index is not None:
+            # Используем последний выбранный или первый из множественного выбора
+            target_index = self.selected_box_index
+            if target_index is None and hasattr(self, 'selected_box_indices') and self.selected_box_indices:
+                target_index = next(iter(self.selected_box_indices))
+            
+            if target_index is not None:
                 self._show_name_dialog_for_selected_box()
         elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
-            # Если нажат Delete/Backspace и есть выбранный бокс, показываем подтверждение и удаляем его
-            if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
+            # Если нажат Delete/Backspace и есть выбранные боксы, показываем подтверждение и удаляем их
+            # Получаем выбранные индексы
+            selected_indices = self.selected_box_indices if hasattr(self, 'selected_box_indices') and self.selected_box_indices else set()
+            if not selected_indices and self.selected_box_index is not None:
+                selected_indices = {self.selected_box_index}
+            
+            if selected_indices:
                 # Показываем диалог подтверждения
                 if not self._confirm_delete_bbox():
                     return
                 
-                # Удаляем выбранный бокс
-                del self.bounding_boxes[self.selected_box_index]
+                # Удаляем выбранные боксы в обратном порядке, чтобы индексы не сдвигались
+                for index in sorted(selected_indices, reverse=True):
+                    if index < len(self.bounding_boxes):
+                        del self.bounding_boxes[index]
+                
                 # Сбрасываем выделение
                 self.selected_box_index = None
+                if hasattr(self, 'selected_box_indices'):
+                    self.selected_box_indices = set()
+                
                 # Обновляем отображение
                 self.update()
                 # Обновляем список bboxes в окне разметки
