@@ -1891,18 +1891,18 @@ class ImageDisplayWidget(QWidget):
                 painter.setPen(QColor(255, 255, 255))
                 painter.drawText(text_x, text_y, name)
                 painter.restore()
-            
-            # Рисуем текущий бокс при создании
-            if self.drawing_box and self.current_box_start:
-                temp_rect = QRectF(
-                    min(self.current_box_start.x(), self.last_mouse_pos.x()) + self.image_offset.x(),
-                    min(self.current_box_start.y(), self.last_mouse_pos.y()) + self.image_offset.y(),
-                    abs(self.last_mouse_pos.x() - self.current_box_start.x()),
-                    abs(self.last_mouse_pos.y() - self.current_box_start.y())
-                )
-                pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
-                painter.setPen(pen)
-                painter.drawRect(temp_rect)
+        
+        # Рисуем текущий бокс при создании (вне цикла, чтобы работало даже когда нет существующих боксов)
+        if self.drawing_box and self.current_box_start:
+            temp_rect = QRectF(
+                min(self.current_box_start.x(), self.last_mouse_pos.x()) + self.image_offset.x(),
+                min(self.current_box_start.y(), self.last_mouse_pos.y()) + self.image_offset.y(),
+                abs(self.last_mouse_pos.x() - self.current_box_start.x()),
+                abs(self.last_mouse_pos.y() - self.current_box_start.y())
+            )
+            pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(temp_rect)
     
     def mousePressEvent(self, event):
         """Обработка нажатия мыши."""
@@ -1965,9 +1965,11 @@ class ImageDisplayWidget(QWidget):
                 else:
                     # Начинаем создание нового бокса
                     self.current_box_start = pos
+                    self.last_mouse_pos = pos  # Initialize last_mouse_pos to current position
                     self.drawing_box = True
                     self.selected_box_index = None
                     self.dragging_box = False
+                    self.update()  # Update to show the initial box (even if zero size)
         
         elif event.button() == Qt.MouseButton.RightButton:
             # Правый клик - режим поворота
