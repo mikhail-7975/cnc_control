@@ -1075,10 +1075,10 @@ class MainWindowControllerV2(QMainWindow):
                             })
                         
                         # Создаем коллаж с кропами компонентов (контрольное изображение уже выровнено)
-                        # saved_count += save_component_crops(
-                        #     etalon_image, control_image, bboxes, col, row, 
-                        #     data_folder, photo_key
-                        # )
+                        saved_count += save_component_crops(
+                            etalon_image, control_image, bboxes, col, row, 
+                            data_folder, photo_key
+                        )
             
             # Выполняем сегментацию компонентов из списка component_crops
             if self.component_crops and segmenter is not None and postprocessor is not None and preprocessor is not None:
