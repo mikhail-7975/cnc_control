@@ -22,10 +22,10 @@ import re
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog,
-    QScrollArea, QGridLayout
+    QScrollArea, QGridLayout, QTreeView
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence, QStandardItemModel, QStandardItem
 import math
 # Try to import UI v2 - adjust class name if needed
 # Add project root to path for UI imports
@@ -124,6 +124,32 @@ class MainWindowControllerV2(QMainWindow):
         self.etalon_original_pixmap = None  # Store original unscaled pixmap
         
         self.clear_etalon_display()
+        
+        # Replace QTableView with QTreeView for hierarchical component list
+        # Store reference to original table view
+        if hasattr(self.ui, 'component_tableView'):
+            # Create QTreeView to replace QTableView
+            self.component_tree_view = QTreeView()
+            self.component_tree_view.setObjectName("component_treeView")
+            # Replace the table view in the layout
+            layout = self.ui.component_scrollAreaWidgetContents.layout()
+            if layout:
+                # Find the table view in the layout
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    if item and item.widget() == self.ui.component_tableView:
+                        # Remove old table view
+                        layout.removeWidget(self.ui.component_tableView)
+                        self.ui.component_tableView.setParent(None)
+                        # Add tree view at the same position
+                        layout.insertWidget(i, self.component_tree_view)
+                        break
+                else:
+                    # If not found, just add it
+                    layout.addWidget(self.component_tree_view)
+        
+        # Initialize component list
+        self.update_component_list()
 
         # Connect signals
         self.setup_connections()
@@ -504,6 +530,9 @@ class MainWindowControllerV2(QMainWindow):
             # Load bboxes for the current image (will be scaled appropriately)
             self.load_current_etalon_bboxes()
             
+            # Обновляем список компонентов при загрузке изображения
+            self.update_component_list()
+            
             self.update_etalon_image_label()
         except Exception as e:
             self.show_error(f"Ошибка при отображении изображения: {str(e)}")
@@ -637,6 +666,9 @@ class MainWindowControllerV2(QMainWindow):
             # Сохраняем все данные обратно в JSON
             with open(bboxes_file, 'w', encoding='utf-8') as f:
                 json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+            
+            # Обновляем список компонентов после сохранения
+            self.update_component_list()
         except Exception as e:
             print(f"Ошибка при сохранении bboxes: {str(e)}")
     
@@ -702,6 +734,75 @@ class MainWindowControllerV2(QMainWindow):
             
         except Exception as e:
             print(f"Ошибка при загрузке bboxes: {str(e)}")
+    
+    def update_component_list(self):
+        """Обновить список компонентов в дереве, сгруппированный по именам изображений."""
+        try:
+            # Use tree view if available, otherwise fall back to table view
+            tree_view = getattr(self, 'component_tree_view', None)
+            table_view = getattr(self.ui, 'component_tableView', None)
+            view = tree_view if tree_view else table_view
+            
+            if not view:
+                return
+            
+            bboxes_file = self.get_etalon_bboxes_file_path()
+            
+            if not bboxes_file.exists():
+                # Если файла нет, очищаем вид
+                model = QStandardItemModel()
+                model.setHorizontalHeaderLabels(["Component Name"])
+                view.setModel(model)
+                return
+            
+            # Загружаем все bboxes из JSON
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            # Создаем модель для дерева
+            model = QStandardItemModel()
+            model.setHorizontalHeaderLabels(["Component Name"])
+            
+            # Группируем компоненты по именам изображений
+            for image_name in sorted(all_bboxes_data.keys()):
+                bboxes_data = all_bboxes_data[image_name]
+                
+                # Создаем родительский элемент для изображения
+                image_item = QStandardItem(image_name)
+                image_item.setEditable(False)
+                
+                # Добавляем компоненты этого изображения как дочерние элементы
+                has_components = False
+                for bbox_data in bboxes_data:
+                    component_name = bbox_data.get('name', '').strip()
+                    # Показываем только компоненты с именами (не пустые)
+                    if component_name:
+                        has_components = True
+                        component_item = QStandardItem(component_name)
+                        component_item.setEditable(False)
+                        # Добавляем как дочерний элемент
+                        image_item.appendRow(component_item)
+                
+                # Если есть компоненты, добавляем изображение в модель
+                if has_components:
+                    model.appendRow(image_item)
+            
+            # Устанавливаем модель в вид
+            view.setModel(model)
+            
+            # Настраиваем дерево
+            if tree_view:
+                # Раскрываем все элементы по умолчанию
+                view.expandAll()
+                # Настраиваем ширину колонки
+                view.setColumnWidth(0, 300)
+            else:
+                # Для таблицы настраиваем ширину колонок
+                view.setColumnWidth(0, 200)
+                view.setColumnWidth(1, 200)
+            
+        except Exception as e:
+            print(f"Ошибка при обновлении списка компонентов: {str(e)}")
     
     def etalon_zoom_in(self):
         """Увеличить масштаб эталонного изображения."""
