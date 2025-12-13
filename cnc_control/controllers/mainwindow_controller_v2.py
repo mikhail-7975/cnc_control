@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QGridLayout, QTreeView
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence, QStandardItemModel, QStandardItem
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence, QStandardItemModel, QStandardItem, QBrush
 import math
 # Try to import UI v2 - adjust class name if needed
 # Add project root to path for UI imports
@@ -817,6 +817,10 @@ class MainWindowControllerV2(QMainWindow):
             model.setHorizontalHeaderLabels(["Component Name"])
             
             # Группируем компоненты по именам изображений
+            # Светло-красный цвет для неназванных компонентов
+            light_red = QColor(255, 200, 200)  # Light red color
+            light_red_brush = QBrush(light_red)
+            
             for image_name in sorted(all_bboxes_data.keys()):
                 bboxes_data = all_bboxes_data[image_name]
                 
@@ -826,15 +830,29 @@ class MainWindowControllerV2(QMainWindow):
                 
                 # Добавляем компоненты этого изображения как дочерние элементы
                 has_components = False
+                unnamed_counter = 1  # Счетчик для неназванных компонентов
+                
                 for bbox_data in bboxes_data:
                     component_name = bbox_data.get('name', '').strip()
-                    # Показываем только компоненты с именами (не пустые)
+                    
                     if component_name:
+                        # Компонент с именем
                         has_components = True
                         component_item = QStandardItem(component_name)
                         component_item.setEditable(False)
                         # Добавляем как дочерний элемент
                         image_item.appendRow(component_item)
+                    else:
+                        # Неназванный компонент - показываем как "UnnamedN"
+                        has_components = True
+                        unnamed_name = f"Unnamed{unnamed_counter}"
+                        component_item = QStandardItem(unnamed_name)
+                        component_item.setEditable(False)
+                        # Применяем светло-красный фон
+                        component_item.setBackground(light_red_brush)
+                        # Добавляем как дочерний элемент
+                        image_item.appendRow(component_item)
+                        unnamed_counter += 1
                 
                 # Если есть компоненты, добавляем изображение в модель
                 if has_components:
