@@ -97,9 +97,10 @@ class ComponentTreeView(QTreeView):
                     item = model.itemFromIndex(index)
                     if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
                         if self.main_window_ref:
-                            # Проверяем, нажат ли Ctrl для множественного выбора
+                            # Проверяем, нажаты ли Ctrl или Shift для множественного выбора
                             ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
-                            self.main_window_ref._select_bbox_from_tree(item, ctrl_pressed=ctrl_pressed)
+                            shift_pressed = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                            self.main_window_ref._select_bbox_from_tree(item, ctrl_pressed=ctrl_pressed, shift_pressed=shift_pressed)
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -1118,7 +1119,7 @@ class MainWindowControllerV2(QMainWindow):
         row = component_item.row()
         return row
     
-    def _select_bbox_from_tree(self, item, ctrl_pressed=False):
+    def _select_bbox_from_tree(self, item, ctrl_pressed=False, shift_pressed=False):
         """Выбрать bbox на изображении при клике на элемент в дереве компонентов."""
         if not item or not item.parent():
             return
@@ -1142,13 +1143,13 @@ class MainWindowControllerV2(QMainWindow):
                     self.display_current_etalon_image()
                     # Ждем немного, чтобы изображение и bboxes загрузились, затем выбираем bbox
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(200, lambda: self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed))
+                    QTimer.singleShot(200, lambda: self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed, shift_pressed=shift_pressed))
                     return
         
         # Если изображение уже текущее, сразу выбираем bbox
-        self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed)
+        self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed, shift_pressed=shift_pressed)
     
-    def _select_bbox_by_index(self, bbox_index, ctrl_pressed=False):
+    def _select_bbox_by_index(self, bbox_index, ctrl_pressed=False, shift_pressed=False):
         """Выбрать bbox по индексу в текущем изображении."""
         if not hasattr(self, 'etalon_image_widget'):
             return
@@ -1160,7 +1161,24 @@ class MainWindowControllerV2(QMainWindow):
             if not hasattr(self.etalon_image_widget, 'selected_box_indices'):
                 self.etalon_image_widget.selected_box_indices = set()
             
-            if ctrl_pressed:
+            if shift_pressed:
+                # Range selection: выбираем все bboxes от последнего выбранного до текущего
+                if self.etalon_image_widget.selected_box_indices:
+                    # Находим последний выбранный индекс (или используем selected_box_index)
+                    last_selected = self.etalon_image_widget.selected_box_index if self.etalon_image_widget.selected_box_index is not None else next(iter(self.etalon_image_widget.selected_box_indices))
+                    # Выбираем диапазон от last_selected до bbox_index
+                    start_idx = min(last_selected, bbox_index)
+                    end_idx = max(last_selected, bbox_index)
+                    # Добавляем все индексы в диапазоне к выбору
+                    for idx in range(start_idx, end_idx + 1):
+                        if idx < len(self.etalon_image_widget.bounding_boxes):
+                            self.etalon_image_widget.selected_box_indices.add(idx)
+                    self.etalon_image_widget.selected_box_index = bbox_index
+                else:
+                    # Если нет предыдущего выбора, просто выбираем текущий
+                    self.etalon_image_widget.selected_box_indices = {bbox_index}
+                    self.etalon_image_widget.selected_box_index = bbox_index
+            elif ctrl_pressed:
                 # Множественный выбор: добавляем/удаляем из выбора
                 if bbox_index in self.etalon_image_widget.selected_box_indices:
                     # Удаляем из выбора
@@ -2530,10 +2548,28 @@ class ImageDisplayWidget(QWidget):
                         break
                 
                 if clicked_box is not None:
-                    # Проверяем, нажат ли Ctrl для множественного выбора
+                    # Проверяем, нажаты ли Ctrl или Shift для множественного выбора
                     ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    shift_pressed = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
                     
-                    if ctrl_pressed:
+                    if shift_pressed:
+                        # Range selection: выбираем все bboxes от последнего выбранного до текущего
+                        if self.selected_box_indices:
+                            # Находим последний выбранный индекс (или используем selected_box_index)
+                            last_selected = self.selected_box_index if self.selected_box_index is not None else next(iter(self.selected_box_indices))
+                            # Выбираем диапазон от last_selected до clicked_box
+                            start_idx = min(last_selected, clicked_box)
+                            end_idx = max(last_selected, clicked_box)
+                            # Добавляем все индексы в диапазоне к выбору
+                            for idx in range(start_idx, end_idx + 1):
+                                if idx < len(self.bounding_boxes):
+                                    self.selected_box_indices.add(idx)
+                            self.selected_box_index = clicked_box
+                        else:
+                            # Если нет предыдущего выбора, просто выбираем текущий
+                            self.selected_box_indices = {clicked_box}
+                            self.selected_box_index = clicked_box
+                    elif ctrl_pressed:
                         # Множественный выбор: добавляем/удаляем из выбора
                         if clicked_box in self.selected_box_indices:
                             # Удаляем из выбора
@@ -2563,8 +2599,8 @@ class ImageDisplayWidget(QWidget):
                     if hasattr(self, 'main_window_ref') and self.main_window_ref:
                         self.main_window_ref.update_component_list()
                     
-                    # Начинаем перетаскивание только если не Ctrl+Click
-                    if not ctrl_pressed:
+                    # Начинаем перетаскивание только если не Ctrl+Click и не Shift+Click
+                    if not ctrl_pressed and not shift_pressed:
                         self.dragging_box = True
                         self.drag_type = interaction_type
                         self.drag_corner_index = interaction_index
