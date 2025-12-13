@@ -1972,9 +1972,15 @@ class ImageDisplayWidget(QWidget):
                     self.update()  # Update to show the initial box (even if zero size)
         
         elif event.button() == Qt.MouseButton.RightButton:
-            # Правый клик - режим поворота
+            # Правый клик - режим поворота (если есть выбранный бокс) или панорамирование
             if self.selected_box_index is not None:
                 self.rotation_mode = True
+            else:
+                # Если нет выбранного бокса, используем правый клик для панорамирования
+                if not self.dragging_box and not self.drawing_box:
+                    self.panning = True
+                    self.pan_start_pos = event.position().toPoint()
+                    self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Средняя кнопка мыши - начало панорамирования
             if not self.dragging_box and not self.drawing_box:
@@ -2207,6 +2213,10 @@ class ImageDisplayWidget(QWidget):
         
         elif event.button() == Qt.MouseButton.RightButton:
             self.rotation_mode = False
+            # Завершение панорамирования (если панорамирование было начато правым кликом)
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             if self.dragging_box:
                 self.dragging_box = False
                 self.drag_type = None
@@ -2310,7 +2320,7 @@ class ImageDisplayWidget(QWidget):
             super().keyPressEvent(event)
     
     def wheelEvent(self, event):
-        """Обработка прокрутки колесика мыши для масштабирования с Ctrl."""
+        """Обработка прокрутки колесика мыши для масштабирования с Ctrl или панорамирования без Ctrl."""
         # Проверяем, нажат ли Ctrl
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Получаем направление прокрутки
@@ -2336,8 +2346,27 @@ class ImageDisplayWidget(QWidget):
                     self.main_window_ref.etalon_zoom_out()
                 event.accept()
                 return
+        else:
+            # Если Ctrl не нажат, используем прокрутку для панорамирования
+            # Получаем направление прокрутки
+            delta_x = event.angleDelta().x()
+            delta_y = event.angleDelta().y()
+            
+            # Если есть горизонтальная прокрутка (trackpad), используем её
+            if delta_x != 0:
+                self.pan_offset.setX(self.pan_offset.x() - delta_x // 10)
+                self.update()
+                event.accept()
+                return
+            
+            # Вертикальная прокрутка - панорамирование вверх/вниз
+            if delta_y != 0:
+                self.pan_offset.setY(self.pan_offset.y() - delta_y // 10)
+                self.update()
+                event.accept()
+                return
         
-        # Если Ctrl не нажат, передаем событие дальше
+        # Если ничего не обработано, передаем событие дальше
         super().wheelEvent(event)
     
     def keyReleaseEvent(self, event):
