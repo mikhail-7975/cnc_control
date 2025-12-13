@@ -47,6 +47,32 @@ from cnc_control.core.algorithms.segmentation import (
 )
 
 
+class ComponentTreeView(QTreeView):
+    """Кастомный QTreeView для списка компонентов с поддержкой переименования по Enter."""
+    
+    def __init__(self, parent=None, main_window_ref=None):
+        super().__init__(parent)
+        self.main_window_ref = main_window_ref
+    
+    def keyPressEvent(self, event):
+        """Обработка нажатия клавиш."""
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            # Если нажат Enter, пытаемся переименовать выбранный компонент
+            selection = self.selectedIndexes()
+            if selection:
+                index = selection[0]
+                model = self.model()
+                if model:
+                    item = model.itemFromIndex(index)
+                    if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
+                        if self.main_window_ref:
+                            self.main_window_ref._rename_component_from_tree(item)
+                        return
+        
+        # Вызываем стандартный обработчик для других клавиш
+        super().keyPressEvent(event)
+
+
 class MainWindowControllerV2(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -128,8 +154,8 @@ class MainWindowControllerV2(QMainWindow):
         # Replace QTableView with QTreeView for hierarchical component list
         # Store reference to original table view
         if hasattr(self.ui, 'component_tableView'):
-            # Create QTreeView to replace QTableView
-            self.component_tree_view = QTreeView()
+            # Create custom QTreeView to replace QTableView
+            self.component_tree_view = ComponentTreeView(main_window_ref=self)
             self.component_tree_view.setObjectName("component_treeView")
             # Replace the table view in the layout
             layout = self.ui.component_scrollAreaWidgetContents.layout()
@@ -890,6 +916,100 @@ class MainWindowControllerV2(QMainWindow):
             
         except Exception as e:
             print(f"Ошибка при обновлении списка компонентов: {str(e)}")
+    
+    def _rename_component_from_tree(self, item):
+        """Переименовать компонент из дерева компонентов."""
+        if not item or not item.parent():
+            return
+        
+        # Получаем имя компонента и изображения
+        component_name = item.text()
+        image_item = item.parent()
+        image_name = image_item.text()
+        
+        # Определяем, является ли это неназванным компонентом
+        is_unnamed = component_name.startswith("Unnamed")
+        
+        # Получаем текущее имя (пустое для неназванных)
+        current_name = "" if is_unnamed else component_name
+        
+        # Открываем диалог для ввода имени
+        text, ok = QInputDialog.getText(
+            self,
+            "Имя компонента",
+            f"Введите имя для компонента (изображение: {image_name}):",
+            text=current_name
+        )
+        
+        if ok and text and text.strip():
+            new_name = text.strip()
+            
+            # Находим соответствующий bbox и обновляем его имя
+            if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+                # Получаем индекс компонента в списке
+                bboxes = self.etalon_image_widget.bounding_boxes
+                
+                # Загружаем bboxes для этого изображения из файла
+                bboxes_file = self.get_etalon_bboxes_file_path()
+                if bboxes_file.exists():
+                    with open(bboxes_file, 'r', encoding='utf-8') as f:
+                        all_bboxes_data = json.load(f)
+                    
+                    if image_name in all_bboxes_data:
+                        bboxes_data = all_bboxes_data[image_name]
+                        
+                        # Находим индекс компонента в списке
+                        # Нужно найти правильный индекс, учитывая порядок в дереве
+                        component_index = self._find_component_index_in_tree(item, image_item)
+                        
+                        if component_index is not None and component_index < len(bboxes_data):
+                            # Обновляем имя в данных
+                            bboxes_data[component_index]['name'] = new_name
+                            
+                            # Сохраняем обновленные данные
+                            with open(bboxes_file, 'w', encoding='utf-8') as f:
+                                json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+                            
+                            # Если это текущее изображение, обновляем bboxes в виджете
+                            current_image_name = self.get_current_etalon_image_name()
+                            if current_image_name == image_name:
+                                # Перезагружаем bboxes для текущего изображения
+                                self.load_current_etalon_bboxes()
+                            
+                            # Обновляем список компонентов
+                            self.update_component_list()
+                            
+                            # Выделяем переименованный компонент в дереве
+                            self._select_component_in_tree(image_name, new_name)
+    
+    def _find_component_index_in_tree(self, component_item, image_item):
+        """Найти индекс компонента в списке bboxes по его позиции в дереве."""
+        # Получаем позицию компонента среди всех дочерних элементов изображения
+        # Это соответствует порядку в bboxes_data, так как мы добавляем их в том же порядке
+        row = component_item.row()
+        return row
+    
+    def _select_component_in_tree(self, image_name, component_name):
+        """Выделить компонент в дереве по имени изображения и компонента."""
+        if not hasattr(self, 'component_tree_view'):
+            return
+        
+        model = self.component_tree_view.model()
+        if not model:
+            return
+        
+        # Ищем изображение
+        for i in range(model.rowCount()):
+            image_item = model.item(i)
+            if image_item and image_item.text() == image_name:
+                # Ищем компонент в этом изображении
+                for j in range(image_item.rowCount()):
+                    component_item = image_item.child(j)
+                    if component_item and component_item.text() == component_name:
+                        # Выделяем компонент
+                        index = model.indexFromItem(component_item)
+                        self.component_tree_view.setCurrentIndex(index)
+                        return
     
     def etalon_zoom_in(self):
         """Увеличить масштаб эталонного изображения."""
