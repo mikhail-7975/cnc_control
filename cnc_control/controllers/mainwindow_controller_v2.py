@@ -68,6 +68,18 @@ class ComponentTreeView(QTreeView):
                         if self.main_window_ref:
                             self.main_window_ref._rename_component_from_tree(item)
                         return
+        elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+            # Если нажат Delete/Backspace, удаляем выбранный компонент
+            selection = self.selectedIndexes()
+            if selection:
+                index = selection[0]
+                model = self.model()
+                if model:
+                    item = model.itemFromIndex(index)
+                    if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
+                        if self.main_window_ref:
+                            self.main_window_ref._delete_component_from_tree(item)
+                        return
         
         # Вызываем стандартный обработчик для других клавиш
         super().keyPressEvent(event)
@@ -981,6 +993,61 @@ class MainWindowControllerV2(QMainWindow):
                             
                             # Выделяем переименованный компонент в дереве
                             self._select_component_in_tree(image_name, new_name)
+    
+    def _delete_component_from_tree(self, item):
+        """Удалить компонент из дерева компонентов."""
+        if not item or not item.parent():
+            return
+        
+        # Получаем имя компонента и изображения
+        component_name = item.text()
+        image_item = item.parent()
+        image_name = image_item.text()
+        
+        # Подтверждение удаления
+        reply = QMessageBox.question(
+            self,
+            "Удаление компонента",
+            f"Вы уверены, что хотите удалить компонент '{component_name}' из изображения '{image_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Загружаем bboxes для этого изображения из файла
+        bboxes_file = self.get_etalon_bboxes_file_path()
+        if bboxes_file.exists():
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            if image_name in all_bboxes_data:
+                bboxes_data = all_bboxes_data[image_name]
+                
+                # Находим индекс компонента в списке bboxes
+                component_index = item.row()
+                
+                if component_index is not None and component_index < len(bboxes_data):
+                    # Удаляем bbox из данных
+                    del bboxes_data[component_index]
+                    
+                    # Если список пуст, удаляем изображение из данных
+                    if not bboxes_data:
+                        del all_bboxes_data[image_name]
+                    
+                    # Сохраняем обновленные данные
+                    with open(bboxes_file, 'w', encoding='utf-8') as f:
+                        json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+                    
+                    # Если это текущее изображение, обновляем bboxes в виджете
+                    current_image_name = self.get_current_etalon_image_name()
+                    if current_image_name == image_name:
+                        # Перезагружаем bboxes для текущего изображения
+                        self.load_current_etalon_bboxes()
+                    
+                    # Обновляем список компонентов
+                    self.update_component_list()
     
     def _find_component_index_in_tree(self, component_item, image_item):
         """Найти индекс компонента в списке bboxes по его позиции в дереве."""
