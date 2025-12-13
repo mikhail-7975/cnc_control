@@ -83,6 +83,21 @@ class ComponentTreeView(QTreeView):
         
         # Вызываем стандартный обработчик для других клавиш
         super().keyPressEvent(event)
+    
+    def mousePressEvent(self, event):
+        """Обработка клика мыши для выбора компонента."""
+        super().mousePressEvent(event)
+        
+        # Если кликнули по элементу, пытаемся выбрать соответствующий bbox
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
+                model = self.model()
+                if model:
+                    item = model.itemFromIndex(index)
+                    if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
+                        if self.main_window_ref:
+                            self.main_window_ref._select_bbox_from_tree(item)
 
 
 class MainWindowControllerV2(QMainWindow):
@@ -1096,6 +1111,57 @@ class MainWindowControllerV2(QMainWindow):
         # Это соответствует порядку в bboxes_data, так как мы добавляем их в том же порядке
         row = component_item.row()
         return row
+    
+    def _select_bbox_from_tree(self, item):
+        """Выбрать bbox на изображении при клике на элемент в дереве компонентов."""
+        if not item or not item.parent():
+            return
+        
+        # Получаем имя компонента и изображения
+        component_name = item.text()
+        image_item = item.parent()
+        image_name = image_item.text()
+        
+        # Получаем индекс компонента в дереве
+        component_index = item.row()
+        
+        # Переключаемся на нужное изображение, если оно не текущее
+        current_image_name = self.get_current_etalon_image_name()
+        if current_image_name != image_name:
+            # Находим индекс изображения в списке
+            if hasattr(self, 'etalon_image_names') and image_name in self.etalon_image_names:
+                image_index = self.etalon_image_names.index(image_name)
+                if image_index >= 0:
+                    self.current_etalon_index = image_index
+                    self.display_current_etalon_image()
+                    # Ждем немного, чтобы изображение и bboxes загрузились, затем выбираем bbox
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(200, lambda: self._select_bbox_by_index(component_index))
+                    return
+        
+        # Если изображение уже текущее, сразу выбираем bbox
+        self._select_bbox_by_index(component_index)
+    
+    def _select_bbox_by_index(self, bbox_index):
+        """Выбрать bbox по индексу в текущем изображении."""
+        if not hasattr(self, 'etalon_image_widget'):
+            return
+        
+        if (bbox_index is not None and 
+            bbox_index < len(self.etalon_image_widget.bounding_boxes)):
+            # Устанавливаем выбранный индекс
+            self.etalon_image_widget.selected_box_index = bbox_index
+            
+            # Обновляем флаг выбранности для всех bboxes
+            for i, box in enumerate(self.etalon_image_widget.bounding_boxes):
+                x1, y1, x2, y2, angle, _, name = box
+                self.etalon_image_widget.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == bbox_index, name)
+            
+            # Обновляем отображение
+            self.etalon_image_widget.update()
+            
+            # Обновляем список компонентов для подсветки
+            self.update_component_list()
     
     def _select_component_in_tree(self, image_name, component_name):
         """Выделить компонент в дереве по имени изображения и компонента."""
