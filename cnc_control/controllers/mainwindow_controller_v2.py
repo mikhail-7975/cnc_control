@@ -546,10 +546,43 @@ class MainWindowControllerV2(QMainWindow):
             total = len(self.etalon_images)
             self.ui.etalon_image_number_label.setText(f"{current_num} / {total}")
 
+    def check_unnamed_bboxes(self):
+        """Проверить наличие неназванных bboxes на текущем изображении."""
+        if not hasattr(self, 'etalon_image_widget') or not self.etalon_image_widget.bounding_boxes:
+            return []
+        
+        unnamed_bboxes = []
+        for i, box in enumerate(self.etalon_image_widget.bounding_boxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            if not name or not name.strip():
+                unnamed_bboxes.append(i)
+        
+        return unnamed_bboxes
+    
     def next_etalon_image(self):
         """Перейти к следующему эталонному изображению."""
         if not self.etalon_images:
             return
+        
+        # Проверяем наличие неназванных bboxes
+        unnamed_bboxes = self.check_unnamed_bboxes()
+        if unnamed_bboxes:
+            # Показываем предупреждение
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle("Неназванные компоненты")
+            msg_box.setText(
+                f"На текущем изображении найдено {len(unnamed_bboxes)} неназванных компонентов.\n\n"
+                "Что вы хотите сделать?"
+            )
+            btn_go_back = msg_box.addButton("Вернуться и задать имена", QMessageBox.ButtonRole.AcceptRole)
+            btn_continue = msg_box.addButton("Продолжить без изменений", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_go_back)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == btn_go_back:
+                # Пользователь хочет вернуться и задать имена
+                return
         
         # Save bboxes for current image before switching
         if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
@@ -567,6 +600,26 @@ class MainWindowControllerV2(QMainWindow):
         """Перейти к предыдущему эталонному изображению."""
         if not self.etalon_images:
             return
+        
+        # Проверяем наличие неназванных bboxes
+        unnamed_bboxes = self.check_unnamed_bboxes()
+        if unnamed_bboxes:
+            # Показываем предупреждение
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle("Неназванные компоненты")
+            msg_box.setText(
+                f"На текущем изображении найдено {len(unnamed_bboxes)} неназванных компонентов.\n\n"
+                "Что вы хотите сделать?"
+            )
+            btn_go_back = msg_box.addButton("Вернуться и задать имена", QMessageBox.ButtonRole.AcceptRole)
+            btn_continue = msg_box.addButton("Продолжить без изменений", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_go_back)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == btn_go_back:
+                # Пользователь хочет вернуться и задать имена
+                return
         
         # Save bboxes for current image before switching
         if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
