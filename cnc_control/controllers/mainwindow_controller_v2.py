@@ -1709,12 +1709,21 @@ class ImageDisplayWidget(QWidget):
         self.drag_start_box = None  # Original box coordinates when drag started
         self.rotation_base_angle = 0.0
         self.rotation_start_pointer_angle = 0.0
+        self.double_click_panning = False  # Флаг панорамирования после двойного клика
         
     def set_image(self, pixmap):
         """Установить изображение для отображения."""
         self.original_image = pixmap
         self.display_pixmap = pixmap
         self.update()
+    
+    def is_image_upscaled(self):
+        """Проверить, увеличено ли изображение (больше размера виджета)."""
+        if not self.display_pixmap:
+            return False
+        pixmap_size = self.display_pixmap.size()
+        widget_size = self.size()
+        return pixmap_size.width() > widget_size.width() or pixmap_size.height() > widget_size.height()
     
     def get_box_corners(self, box):
         """Получить координаты углов бокса с учетом поворота."""
@@ -1917,6 +1926,11 @@ class ImageDisplayWidget(QWidget):
             
             pixmap_rect = self.display_pixmap.rect()
             if not (0 <= pos.x() < pixmap_rect.width() and 0 <= pos.y() < pixmap_rect.height()):
+                # Если клик вне изображения, но изображение увеличено, разрешаем панорамирование
+                if self.is_image_upscaled():
+                    self.panning = True
+                    self.pan_start_pos = widget_pos
+                    self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
                 return
             
             if self.rotation_mode and self.selected_box_index is not None:
@@ -1963,7 +1977,7 @@ class ImageDisplayWidget(QWidget):
                     self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
-                    # Начинаем создание нового бокса
+                    # Начинаем создание нового бокса (обычное поведение)
                     self.current_box_start = pos
                     self.last_mouse_pos = pos  # Initialize last_mouse_pos to current position
                     self.drawing_box = True
@@ -2153,6 +2167,18 @@ class ImageDisplayWidget(QWidget):
             self.update()
         elif self.drawing_box:
             self.update()
+        elif self.double_click_panning:
+            # Панорамирование после двойного клика
+            current_pos = event.position().toPoint()
+            dx = current_pos.x() - self.pan_start_pos.x()
+            dy = current_pos.y() - self.pan_start_pos.y()
+            self.pan_offset.setX(self.pan_offset.x() + dx)
+            self.pan_offset.setY(self.pan_offset.y() + dy)
+            self.pan_start_pos = current_pos
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
         elif self.panning:
             # Панорамирование изображения
             current_pos = event.position().toPoint()
@@ -2166,9 +2192,34 @@ class ImageDisplayWidget(QWidget):
             if hasattr(self, 'marking_window') and self.marking_window:
                 self.marking_window.update_scrollbars()
     
+    def mouseDoubleClickEvent(self, event):
+        """Обработка двойного клика мыши для начала панорамирования."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Если изображение увеличено, начинаем панорамирование после двойного клика
+            if self.is_image_upscaled():
+                self.double_click_panning = True
+                self.pan_start_pos = event.position().toPoint()
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+    
     def mouseReleaseEvent(self, event):
         """Обработка отпускания мыши."""
         if event.button() == Qt.MouseButton.LeftButton:
+            # Завершаем панорамирование после двойного клика
+            if self.double_click_panning:
+                self.double_click_panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+                # Обновляем scrollbars
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_scrollbars()
+            
+            # Завершаем обычное панорамирование, если оно было начато
+            if self.panning and not self.drawing_box and not self.dragging_box:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+                # Обновляем scrollbars
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_scrollbars()
+            
             if self.drawing_box and self.current_box_start:
                 # Завершаем создание бокса
                 widget_pos = event.position().toPoint()
