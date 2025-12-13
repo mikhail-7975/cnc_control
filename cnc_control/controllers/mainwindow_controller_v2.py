@@ -812,6 +812,18 @@ class MainWindowControllerV2(QMainWindow):
             with open(bboxes_file, 'r', encoding='utf-8') as f:
                 all_bboxes_data = json.load(f)
             
+            # Получаем список загруженных изображений
+            loaded_image_names = None
+            if hasattr(self, 'etalon_image_names') and self.etalon_image_names:
+                loaded_image_names = set(self.etalon_image_names)
+            
+            # Если нет загруженных изображений, показываем пустой список
+            if loaded_image_names is None or len(loaded_image_names) == 0:
+                model = QStandardItemModel()
+                model.setHorizontalHeaderLabels(["Component Name"])
+                view.setModel(model)
+                return
+            
             # Создаем модель для дерева
             model = QStandardItemModel()
             model.setHorizontalHeaderLabels(["Component Name"])
@@ -821,7 +833,11 @@ class MainWindowControllerV2(QMainWindow):
             light_red = QColor(255, 200, 200)  # Light red color
             light_red_brush = QBrush(light_red)
             
+            # Фильтруем только изображения из загруженных
             for image_name in sorted(all_bboxes_data.keys()):
+                # Пропускаем изображения, которые не загружены
+                if image_name not in loaded_image_names:
+                    continue
                 bboxes_data = all_bboxes_data[image_name]
                 
                 # Создаем родительский элемент для изображения
