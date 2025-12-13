@@ -447,12 +447,13 @@ class MainWindowControllerV2(QMainWindow):
             self.current_etalon_index = len(self.etalon_images) - 1
         
         try:
-            # Save bboxes for previous image before switching
-            if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
-                self.save_current_etalon_bboxes()
-            
             # Reset zoom calculation for new image (will recalculate initial fit)
             self.etalon_initial_zoom_calculated = False
+            
+            # Clear bboxes before loading new image (they should already be cleared in next/prev methods)
+            # But clear here too as a safety measure
+            if hasattr(self, 'etalon_image_widget'):
+                self.etalon_image_widget.bounding_boxes = []
             
             image = self.etalon_images[self.current_etalon_index]
             # Конвертируем BGR в RGB для Qt
@@ -496,6 +497,10 @@ class MainWindowControllerV2(QMainWindow):
             self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
             self.ui.display_etalon_image_widget.setStyleSheet("")
             
+            # Clear bboxes before loading (ensure clean state)
+            if hasattr(self, 'etalon_image_widget'):
+                self.etalon_image_widget.bounding_boxes = []
+            
             # Load bboxes for the current image (will be scaled appropriately)
             self.load_current_etalon_bboxes()
             
@@ -517,6 +522,15 @@ class MainWindowControllerV2(QMainWindow):
         if not self.etalon_images:
             return
         
+        # Save bboxes for current image before switching
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+            self.save_current_etalon_bboxes()
+        
+        # Clear bboxes before switching
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.bounding_boxes = []
+            self.etalon_image_widget.update()
+        
         self.current_etalon_index = (self.current_etalon_index + 1) % len(self.etalon_images)
         self.display_current_etalon_image()
 
@@ -524,6 +538,15 @@ class MainWindowControllerV2(QMainWindow):
         """Перейти к предыдущему эталонному изображению."""
         if not self.etalon_images:
             return
+        
+        # Save bboxes for current image before switching
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+            self.save_current_etalon_bboxes()
+        
+        # Clear bboxes before switching
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.bounding_boxes = []
+            self.etalon_image_widget.update()
         
         self.current_etalon_index = (self.current_etalon_index - 1) % len(self.etalon_images)
         self.display_current_etalon_image()
@@ -546,14 +569,17 @@ class MainWindowControllerV2(QMainWindow):
         pass
     
     def get_current_etalon_image_name(self):
-        """Получить имя текущего эталонного изображения."""
+        """Получить уникальное имя текущего эталонного изображения для сохранения bboxes."""
         if self.current_etalon_index < 0 or not self.etalon_images:
             return None
+        # Use index to ensure uniqueness even if filenames are the same
         if self.current_etalon_index < len(self.etalon_image_names):
-            return self.etalon_image_names[self.current_etalon_index]
+            # Include index in the key to ensure each image has its own bboxes
+            base_name = self.etalon_image_names[self.current_etalon_index]
+            return f"{self.current_etalon_index}_{base_name}"
         else:
             # Fallback на номер, если имя недоступно
-            return f"image_{self.current_etalon_index + 1}"
+            return f"image_{self.current_etalon_index}"
     
     def get_etalon_bboxes_file_path(self):
         """Получить путь к единому файлу для сохранения всех bboxes."""
@@ -631,12 +657,24 @@ class MainWindowControllerV2(QMainWindow):
             with open(bboxes_file, 'r', encoding='utf-8') as f:
                 all_bboxes_data = json.load(f)
             
-            # Получаем имя текущего изображения
+            # Получаем имя текущего изображения (с индексом для уникальности)
             image_name = self.get_current_etalon_image_name()
-            if not image_name or image_name not in all_bboxes_data:
-                return  # Нет bboxes для этого изображения
+            if not image_name:
+                return
             
-            bboxes_data = all_bboxes_data[image_name]
+            # Try new format first (with index)
+            bboxes_data = None
+            if image_name in all_bboxes_data:
+                bboxes_data = all_bboxes_data[image_name]
+            else:
+                # Fallback to old format (without index) for backward compatibility
+                if self.current_etalon_index < len(self.etalon_image_names):
+                    old_name = self.etalon_image_names[self.current_etalon_index]
+                    if old_name in all_bboxes_data:
+                        bboxes_data = all_bboxes_data[old_name]
+            
+            if not bboxes_data:
+                return  # Нет bboxes для этого изображения
             
             # Use current zoom scale for coordinate conversion
             scale = self.etalon_zoom_scale
