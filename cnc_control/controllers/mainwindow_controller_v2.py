@@ -3027,8 +3027,14 @@ class ImageDisplayWidget(QWidget):
                 # Завершаем создание бокса
                 widget_pos = event.position().toPoint()
                 end_pos = widget_pos - self.image_offset
-                x1, y1 = self.current_box_start.x(), self.current_box_start.y()
-                x2, y2 = end_pos.x(), end_pos.y()
+                start_x, start_y = self.current_box_start.x(), self.current_box_start.y()
+                end_x, end_y = end_pos.x(), end_pos.y()
+                
+                # Нормализуем координаты, чтобы x1 < x2 и y1 < y2 (обе точки - противоположные углы)
+                x1 = min(start_x, end_x)
+                y1 = min(start_y, end_y)
+                x2 = max(start_x, end_x)
+                y2 = max(start_y, end_y)
                 
                 # Проверяем, что бокс имеет ненулевой размер
                 if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
