@@ -2242,6 +2242,7 @@ class ImageDisplayWidget(QWidget):
         self.selection_rect_start = None  # Начальная точка для прямоугольника выбора
         self.selection_rect_end = None  # Конечная точка для прямоугольника выбора
         self.drawing_selection_rect = False  # Флаг рисования прямоугольника выбора
+        self.hovered_box_index = None  # Индекс bbox, над которым находится курсор
         
     def set_image(self, pixmap):
         """Установить изображение для отображения."""
@@ -2450,8 +2451,17 @@ class ImageDisplayWidget(QWidget):
             painter.rotate(angle)
             painter.translate(-center)
             
+            # Определяем цвет в зависимости от состояния
+            is_hovered = (i == self.hovered_box_index) if hasattr(self, 'hovered_box_index') else False
+            if is_selected:
+                box_color = QColor(0, 255, 0)  # Зеленый для выбранного
+            elif is_hovered:
+                box_color = QColor(255, 255, 0)  # Желтый для наведения
+            else:
+                box_color = QColor(255, 0, 0)  # Красный для обычного
+            
             # Рисуем прямоугольник
-            pen = QPen(QColor(0, 255, 0) if is_selected else QColor(255, 0, 0), 2)
+            pen = QPen(box_color, 2)
             painter.setPen(pen)
             painter.drawRect(rect)
             
@@ -2464,7 +2474,7 @@ class ImageDisplayWidget(QWidget):
                 QRectF(rect.left() - corner_size/2, rect.bottom() - corner_size/2, corner_size, corner_size)
             ]
             for corner in corners:
-                painter.fillRect(corner, pen.color())
+                painter.fillRect(corner, box_color)
             
             painter.restore()
             
@@ -2727,6 +2737,27 @@ class ImageDisplayWidget(QWidget):
             
             if not cursor_set:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            
+            # Проверяем, над каким bbox находится курсор (для подсветки при наведении)
+            hovered_box = None
+            if not self.dragging_box and not self.drawing_box and not self.drawing_selection_rect:
+                # Проверяем bboxes в обратном порядке (сначала верхние)
+                for i in range(len(self.bounding_boxes) - 1, -1, -1):
+                    box = self.bounding_boxes[i]
+                    interaction_type, _ = self.detect_box_interaction(pos, box)
+                    if interaction_type is not None:
+                        hovered_box = i
+                        break
+            
+            # Обновляем индекс наведенного bbox
+            if hovered_box != self.hovered_box_index:
+                self.hovered_box_index = hovered_box
+                self.update()  # Обновляем отображение для подсветки
+        else:
+            # Если мы не в режиме проверки курсора, сбрасываем hover
+            if self.hovered_box_index is not None:
+                self.hovered_box_index = None
+                self.update()
         
         if self.rotation_mode and self.selected_box_index is not None:
             # Поворот выбранного бокса
