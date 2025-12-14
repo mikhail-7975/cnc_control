@@ -2283,17 +2283,25 @@ class ImageDisplayWidget(QWidget):
     def get_box_corners(self, box):
         """Получить координаты углов бокса с учетом поворота."""
         x1, y1, x2, y2, angle, _, _ = box
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
-        width = abs(x2 - x1)
-        height = abs(y2 - y1)
         
-        # Углы без поворота
+        # Нормализуем координаты, чтобы гарантировать правильный порядок углов
+        # Это важно для правильного расчета внутренней области
+        norm_x1 = min(x1, x2)
+        norm_y1 = min(y1, y2)
+        norm_x2 = max(x1, x2)
+        norm_y2 = max(y1, y2)
+        
+        center_x = (norm_x1 + norm_x2) / 2
+        center_y = (norm_y1 + norm_y2) / 2
+        width = abs(norm_x2 - norm_x1)
+        height = abs(norm_y2 - norm_y1)
+        
+        # Углы без поворота (используем нормализованные координаты)
         corners = [
-            (x1, y1),  # top-left
-            (x2, y1),  # top-right
-            (x2, y2),  # bottom-right
-            (x1, y2)   # bottom-left
+            (norm_x1, norm_y1),  # top-left
+            (norm_x2, norm_y1),  # top-right
+            (norm_x2, norm_y2),  # bottom-right
+            (norm_x1, norm_y2)   # bottom-left
         ]
         
         # Применяем поворот
@@ -2451,9 +2459,16 @@ class ImageDisplayWidget(QWidget):
             x1, y1, x2, y2, angle, selected, name = box
             is_selected = (i in self.selected_box_indices) if hasattr(self, 'selected_box_indices') else (i == self.selected_box_index)
             
+            # Нормализуем координаты, чтобы гарантировать правильный порядок (x1 < x2, y1 < y2)
+            # Это важно для правильного расчета внутренней области независимо от направления рисования
+            norm_x1 = min(x1, x2)
+            norm_y1 = min(y1, y2)
+            norm_x2 = max(x1, x2)
+            norm_y2 = max(y1, y2)
+            
             # Преобразуем координаты с учетом смещения изображения
-            p1 = QPoint(int(x1) + self.image_offset.x(), int(y1) + self.image_offset.y())
-            p2 = QPoint(int(x2) + self.image_offset.x(), int(y2) + self.image_offset.y())
+            p1 = QPoint(int(norm_x1) + self.image_offset.x(), int(norm_y1) + self.image_offset.y())
+            p2 = QPoint(int(norm_x2) + self.image_offset.x(), int(norm_y2) + self.image_offset.y())
             
             # Вычисляем центр и углы прямоугольника
             center_x = (p1.x() + p2.x()) / 2
@@ -2463,9 +2478,8 @@ class ImageDisplayWidget(QWidget):
             width = abs(p2.x() - p1.x())
             height = abs(p2.y() - p1.y())
             
-            # Создаем прямоугольник
+            # Создаем прямоугольник (координаты уже нормализованы)
             rect = QRectF(p1.x(), p1.y(), width, height)
-            rect = rect.normalized()
             
             # Применяем поворот
             painter.save()
@@ -3031,10 +3045,18 @@ class ImageDisplayWidget(QWidget):
                 end_x, end_y = end_pos.x(), end_pos.y()
                 
                 # Нормализуем координаты, чтобы x1 < x2 и y1 < y2 (обе точки - противоположные углы)
+                # Это гарантирует правильные координаты внутренней области независимо от направления рисования
                 x1 = min(start_x, end_x)
                 y1 = min(start_y, end_y)
                 x2 = max(start_x, end_x)
                 y2 = max(start_y, end_y)
+                
+                # Убеждаемся, что координаты действительно нормализованы (x1 < x2, y1 < y2)
+                # Это важно для правильного расчета внутренней области
+                if x1 >= x2:
+                    x1, x2 = x2, x1
+                if y1 >= y2:
+                    y1, y2 = y2, y1
                 
                 # Проверяем, что бокс имеет ненулевой размер
                 if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
