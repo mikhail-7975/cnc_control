@@ -2858,70 +2858,119 @@ class ImageDisplayWidget(QWidget):
                 self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
             elif self.drag_type == 'edge':
                 # Изменение размера через край
+                # Правило: при перетаскивании края его углы двигаются, но противоположные углы остаются фиксированными
                 edge = self.drag_corner_index
                 
-                # Работаем в системе координат бокса (до поворота)
+                # Получаем исходные повернутые углы бокса
                 orig_x1, orig_y1, orig_x2, orig_y2, orig_angle, _, orig_name = self.drag_start_box
-                center_x = (orig_x1 + orig_x2) / 2
-                center_y = (orig_y1 + orig_y2) / 2
-                width = abs(orig_x2 - orig_x1)
-                height = abs(orig_y2 - orig_y1)
+                start_corners = self.get_box_corners(self.drag_start_box)
                 
-                # Преобразуем текущую позицию мыши в систему координат бокса
-                # (поворачиваем обратно на -angle)
-                angle_rad = -math.radians(angle)
+                # Вычисляем смещение мыши в координатах изображения
+                dx = self.last_mouse_pos.x() - self.drag_start_pos.x()
+                dy = self.last_mouse_pos.y() - self.drag_start_pos.y()
+                
+                # Определяем, какие углы принадлежат перетаскиваемому краю
+                # edge 0: верхний край - углы 0 и 1 (противоположные: 2 и 3)
+                # edge 1: правый край - углы 1 и 2 (противоположные: 0 и 3)
+                # edge 2: нижний край - углы 2 и 3 (противоположные: 0 и 1)
+                # edge 3: левый край - углы 3 и 0 (противоположные: 1 и 2)
+                
+                # Углы, которые должны двигаться (принадлежат перетаскиваемому краю)
+                if edge == 0:  # Верхний край
+                    moving_corners = [0, 1]
+                    fixed_corners = [2, 3]
+                elif edge == 1:  # Правый край
+                    moving_corners = [1, 2]
+                    fixed_corners = [0, 3]
+                elif edge == 2:  # Нижний край
+                    moving_corners = [2, 3]
+                    fixed_corners = [0, 1]
+                else:  # edge == 3, левый край
+                    moving_corners = [3, 0]
+                    fixed_corners = [1, 2]
+                
+                # Вычисляем направление края для правильного перемещения
+                # Край идет от corner[moving_corners[0]] к corner[moving_corners[1]]
+                corner1 = start_corners[moving_corners[0]]
+                corner2 = start_corners[moving_corners[1]]
+                
+                # Вектор края
+                edge_vec_x = corner2[0] - corner1[0]
+                edge_vec_y = corner2[1] - corner1[1]
+                edge_len = math.sqrt(edge_vec_x**2 + edge_vec_y**2)
+                
+                if edge_len > 0:
+                    # Нормализованный вектор края
+                    edge_norm_x = edge_vec_x / edge_len
+                    edge_norm_y = edge_vec_y / edge_len
+                    
+                    # Вектор нормали к краю (направление движения края)
+                    # Поворачиваем вектор края на 90 градусов против часовой стрелки
+                    normal_x = -edge_norm_y
+                    normal_y = edge_norm_x
+                    
+                    # Проекция смещения мыши на нормаль к краю
+                    # Это определяет, насколько далеко должен двигаться край
+                    projection = dx * normal_x + dy * normal_y
+                    
+                    # Перемещаем углы края вдоль нормали
+                    new_corners = list(start_corners)
+                    for corner_idx in moving_corners:
+                        old_x, old_y = new_corners[corner_idx]
+                        new_corners[corner_idx] = (old_x + projection * normal_x, old_y + projection * normal_y)
+                    
+                    # Противоположные углы остаются фиксированными (не изменяем)
+                    # new_corners[fixed_corners] остаются как в start_corners
+                else:
+                    # Если длина края нулевая, просто перемещаем углы на смещение мыши
+                    new_corners = list(start_corners)
+                    for corner_idx in moving_corners:
+                        old_x, old_y = new_corners[corner_idx]
+                        new_corners[corner_idx] = (old_x + dx, old_y + dy)
+                
+                # Вычисляем центр новых углов (для обратного преобразования)
+                center_x = sum(corner[0] for corner in new_corners) / 4
+                center_y = sum(corner[1] for corner in new_corners) / 4
+                
+                # Преобразуем новые углы обратно в систему координат без поворота
+                # (обратное преобразование от get_box_corners)
+                angle_rad = -math.radians(orig_angle)
                 cos_a = math.cos(angle_rad)
                 sin_a = math.sin(angle_rad)
                 
-                # Смещение мыши относительно центра
-                rel_x = self.last_mouse_pos.x() - center_x
-                rel_y = self.last_mouse_pos.y() - center_y
+                unrotated_corners = []
+                for corner_x, corner_y in new_corners:
+                    # Переводим в систему координат с центром в центре бокса
+                    dx = corner_x - center_x
+                    dy = corner_y - center_y
+                    # Поворачиваем обратно (на -angle)
+                    rx = dx * cos_a - dy * sin_a
+                    ry = dx * sin_a + dy * cos_a
+                    # Возвращаем в исходную систему координат
+                    unrotated_corners.append((rx + center_x, ry + center_y))
                 
-                # Поворачиваем в систему координат бокса
-                rotated_dx = rel_x * cos_a - rel_y * sin_a
-                rotated_dy = rel_x * sin_a + rel_y * cos_a
+                # Вычисляем новый axis-aligned bounding box из не повернутых углов
+                all_x = [corner[0] for corner in unrotated_corners]
+                all_y = [corner[1] for corner in unrotated_corners]
                 
-                # Начальное смещение в системе координат бокса
-                start_rel_x = self.drag_start_pos.x() - center_x
-                start_rel_y = self.drag_start_pos.y() - center_y
-                start_rotated_dx = start_rel_x * cos_a - start_rel_y * sin_a
-                start_rotated_dy = start_rel_x * sin_a + start_rel_y * cos_a
+                new_x1 = min(all_x)
+                new_y1 = min(all_y)
+                new_x2 = max(all_x)
+                new_y2 = max(all_y)
                 
-                # Изменение в системе координат бокса
-                delta_rotated_x = rotated_dx - start_rotated_dx
-                delta_rotated_y = rotated_dy - start_rotated_dy
-                
-                # Определяем, какой размер изменяется в зависимости от края
-                # edge 0: верхний край (y1 изменяется)
-                # edge 1: правый край (x2 изменяется)
-                # edge 2: нижний край (y2 изменяется)
-                # edge 3: левый край (x1 изменяется)
-                
-                new_x1, new_y1, new_x2, new_y2 = orig_x1, orig_y1, orig_x2, orig_y2
-                
-                if edge == 0:  # Верхний край - изменяем y1
-                    new_y1 = orig_y1 + delta_rotated_y
-                elif edge == 1:  # Правый край - изменяем x2
-                    new_x2 = orig_x2 + delta_rotated_x
-                elif edge == 2:  # Нижний край - изменяем y2
-                    new_y2 = orig_y2 + delta_rotated_y
-                elif edge == 3:  # Левый край - изменяем x1
-                    new_x1 = orig_x1 + delta_rotated_x
-                
-                # Убеждаемся, что размеры не стали отрицательными
+                # Убеждаемся, что размеры не стали слишком маленькими
                 if abs(new_x2 - new_x1) < 5:
-                    if edge == 1:
-                        new_x2 = new_x1 + 5
-                    elif edge == 3:
-                        new_x1 = new_x2 - 5
+                    center_x_bbox = (new_x1 + new_x2) / 2
+                    new_x1 = center_x_bbox - 2.5
+                    new_x2 = center_x_bbox + 2.5
                 
                 if abs(new_y2 - new_y1) < 5:
-                    if edge == 2:
-                        new_y2 = new_y1 + 5
-                    elif edge == 0:
-                        new_y1 = new_y2 - 5
+                    center_y_bbox = (new_y1 + new_y2) / 2
+                    new_y1 = center_y_bbox - 2.5
+                    new_y2 = center_y_bbox + 2.5
                 
-                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
+                # Сохраняем угол поворота из исходного бокса
+                self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, orig_angle, True, name)
             
             self.update()
         elif self.drawing_selection_rect:
