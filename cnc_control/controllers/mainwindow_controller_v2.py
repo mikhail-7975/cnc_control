@@ -3246,16 +3246,27 @@ class ImageDisplayWidget(QWidget):
                             'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
                             'angle': angle, 'name': name
                         })
+                # Сбрасываем счетчик вставок при копировании
+                self.main_window_ref.bbox_paste_count = 0
                 return
         elif ctrl_pressed and event.key() == Qt.Key.Key_V:
             # Ctrl+V - вставка bboxes из буфера обмена
             if hasattr(self, 'main_window_ref') and self.main_window_ref:
                 if self.main_window_ref.bbox_clipboard:
-                    # Вычисляем смещение для вставки (чтобы не накладывались на оригиналы)
-                    offset_x = 20
-                    offset_y = 20
+                    # Инициализируем счетчик вставок, если его еще нет
+                    if not hasattr(self.main_window_ref, 'bbox_paste_count'):
+                        self.main_window_ref.bbox_paste_count = 0
                     
-                    # Добавляем скопированные bboxes с небольшим смещением
+                    # Увеличиваем счетчик вставок для прогрессивного смещения
+                    self.main_window_ref.bbox_paste_count += 1
+                    
+                    # Вычисляем смещение для вставки (чтобы не накладывались на оригиналы)
+                    # Каждая последующая вставка смещается дальше от предыдущей
+                    base_offset = 20
+                    offset_x = base_offset * self.main_window_ref.bbox_paste_count
+                    offset_y = base_offset * self.main_window_ref.bbox_paste_count
+                    
+                    # Добавляем скопированные bboxes с прогрессивным смещением
                     new_indices = []
                     for bbox_data in self.main_window_ref.bbox_clipboard:
                         new_x1 = bbox_data['x1'] + offset_x
