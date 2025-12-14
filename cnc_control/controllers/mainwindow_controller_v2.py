@@ -2236,6 +2236,9 @@ class ImageDisplayWidget(QWidget):
         self.rotation_base_angle = 0.0
         self.rotation_start_pointer_angle = 0.0
         self.double_click_panning = False  # Флаг панорамирования после двойного клика
+        self.selection_rect_start = None  # Начальная точка для прямоугольника выбора
+        self.selection_rect_end = None  # Конечная точка для прямоугольника выбора
+        self.drawing_selection_rect = False  # Флаг рисования прямоугольника выбора
         
     def set_image(self, pixmap):
         """Установить изображение для отображения."""
@@ -2485,6 +2488,24 @@ class ImageDisplayWidget(QWidget):
                 painter.drawText(text_x, text_y, name)
                 painter.restore()
         
+        # Рисуем прямоугольник выбора (если рисуется)
+        if self.drawing_selection_rect and self.selection_rect_start and self.selection_rect_end:
+            rect_x1 = min(self.selection_rect_start.x(), self.selection_rect_end.x()) + self.image_offset.x()
+            rect_y1 = min(self.selection_rect_start.y(), self.selection_rect_end.y()) + self.image_offset.y()
+            rect_x2 = max(self.selection_rect_start.x(), self.selection_rect_end.x()) + self.image_offset.x()
+            rect_y2 = max(self.selection_rect_start.y(), self.selection_rect_end.y()) + self.image_offset.y()
+            
+            selection_rect = QRectF(
+                rect_x1,
+                rect_y1,
+                rect_x2 - rect_x1,
+                rect_y2 - rect_y1
+            )
+            # Рисуем полупрозрачный прямоугольник выбора
+            painter.setPen(QPen(QColor(100, 150, 255), 2, Qt.PenStyle.DashLine))
+            painter.setBrush(QBrush(QColor(100, 150, 255, 50)))  # Полупрозрачная заливка
+            painter.drawRect(selection_rect)
+        
         # Рисуем текущий бокс при создании (вне цикла, чтобы работало даже когда нет существующих боксов)
         if self.drawing_box and self.current_box_start:
             temp_rect = QRectF(
@@ -2608,6 +2629,18 @@ class ImageDisplayWidget(QWidget):
                         self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
+                    # Проверяем, нажат ли Shift для прямоугольного выбора
+                    shift_pressed = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    
+                    if shift_pressed:
+                        # Начинаем рисование прямоугольника выбора
+                        self.selection_rect_start = pos
+                        self.selection_rect_end = pos
+                        self.drawing_selection_rect = True
+                        self.dragging_box = False
+                        self.update()
+                        return
+                    
                     # Начинаем создание нового бокса (обычное поведение)
                     # Проверяем, нажат ли Ctrl - если да, не снимаем выделение
                     ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
@@ -2809,6 +2842,12 @@ class ImageDisplayWidget(QWidget):
                 self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
             
             self.update()
+        elif self.drawing_selection_rect:
+            # Обновляем конечную точку прямоугольника выбора
+            current_pos = event.position().toPoint()
+            pos = current_pos - self.image_offset
+            self.selection_rect_end = pos
+            self.update()
         elif self.drawing_box:
             self.update()
         elif self.double_click_panning:
@@ -2861,12 +2900,63 @@ class ImageDisplayWidget(QWidget):
                     self.marking_window.update_scrollbars()
             
             # Завершаем обычное панорамирование, если оно было начато
-            if self.panning and not self.drawing_box and not self.dragging_box:
+            if self.panning and not self.drawing_box and not self.dragging_box and not self.drawing_selection_rect:
                 self.panning = False
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
                 # Обновляем scrollbars
                 if hasattr(self, 'marking_window') and self.marking_window:
                     self.marking_window.update_scrollbars()
+            
+            # Завершаем рисование прямоугольника выбора
+            if self.drawing_selection_rect:
+                if self.selection_rect_start and self.selection_rect_end:
+                    # Вычисляем прямоугольник выбора
+                    rect_x1 = min(self.selection_rect_start.x(), self.selection_rect_end.x())
+                    rect_y1 = min(self.selection_rect_start.y(), self.selection_rect_end.y())
+                    rect_x2 = max(self.selection_rect_start.x(), self.selection_rect_end.x())
+                    rect_y2 = max(self.selection_rect_start.y(), self.selection_rect_end.y())
+                    
+                    # Проверяем, какие bboxes пересекаются с прямоугольником выбора
+                    selected_indices = set()
+                    for i, box in enumerate(self.bounding_boxes):
+                        x1, y1, x2, y2, angle, _, name = box
+                        # Преобразуем координаты bbox с учетом смещения изображения
+                        box_x1 = int(x1) + self.image_offset.x()
+                        box_y1 = int(y1) + self.image_offset.y()
+                        box_x2 = int(x2) + self.image_offset.x()
+                        box_y2 = int(y2) + self.image_offset.y()
+                        
+                        # Проверяем пересечение прямоугольников
+                        if not (rect_x2 < box_x1 or rect_x1 > box_x2 or rect_y2 < box_y1 or rect_y1 > box_y2):
+                            selected_indices.add(i)
+                    
+                    # Добавляем найденные bboxes к выбору
+                    if selected_indices:
+                        # Если Ctrl не нажат, очищаем предыдущий выбор
+                        ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                        if not ctrl_pressed:
+                            self.selected_box_indices = selected_indices.copy()
+                        else:
+                            # Добавляем к существующему выбору
+                            self.selected_box_indices.update(selected_indices)
+                        
+                        if selected_indices:
+                            self.selected_box_index = next(iter(selected_indices))
+                        
+                        # Обновляем флаг выбранности для всех bboxes
+                        for i, box in enumerate(self.bounding_boxes):
+                            x1, y1, x2, y2, angle, _, name = box
+                            self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.selected_box_indices, name)
+                        
+                        # Обновляем список компонентов
+                        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                            self.main_window_ref.update_component_list()
+                
+                # Очищаем прямоугольник выбора
+                self.selection_rect_start = None
+                self.selection_rect_end = None
+                self.drawing_selection_rect = False
+                self.update()
             
             if self.drawing_box and self.current_box_start:
                 # Завершаем создание бокса
