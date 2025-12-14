@@ -74,42 +74,59 @@ class ThreadSafeCameraReader:
             backend: cv2.CAP_DSHOW or cv2.CAP_MSMF (None for auto)
         """
         self.camera_id = camera_id
+        self.calibration_file = calibration_file
+        self.backend = backend
         self.undistorter = None
         if calibration_file is not None:
             self.undistorter = FisheyeUndistorter(calibration_file)
 
+        self._latest_raw_frame = None
+        self._frame_lock = threading.Lock()
+        self._running = True
+        
+        # Initialize camera
+        self._initialize_camera()
+        
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+        
+        # Wait a bit for first frame to be captured
+        time.sleep(0.2)
+    
+    def _initialize_camera(self):
+        """Initialize or reinitialize the camera with all settings."""
         # Detect OS and select appropriate backend
-        if backend is None:
+        if self.backend is None:
             os_name = platform.system().lower()
             
             if os_name == 'linux':
                 # Try V4L2 backend on Linux
                 try:
-                    self.cap = cv2.VideoCapture(camera_id, cv2.CAP_V4L2)
+                    self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_V4L2)
                     if not self.cap.isOpened():
                         # Fallback to no backend specification
-                        self.cap = cv2.VideoCapture(camera_id)
+                        self.cap = cv2.VideoCapture(self.camera_id)
                 except (AttributeError, ValueError):
                     # Fallback to default backend if V4L2 constant is not available
-                    self.cap = cv2.VideoCapture(camera_id)
+                    self.cap = cv2.VideoCapture(self.camera_id)
             elif os_name == 'windows':
                 # Try DirectShow backend on Windows
                 try:
-                    self.cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+                    self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
                     if not self.cap.isOpened():
                         # Fallback to no backend specification
-                        self.cap = cv2.VideoCapture(camera_id)
+                        self.cap = cv2.VideoCapture(self.camera_id)
                 except (AttributeError, ValueError):
                     # Fallback to default backend if DShow constant is not available
-                    self.cap = cv2.VideoCapture(camera_id)
+                    self.cap = cv2.VideoCapture(self.camera_id)
             else:
                 # For other OS (macOS, etc.), don't specify backend
-                self.cap = cv2.VideoCapture(camera_id)
+                self.cap = cv2.VideoCapture(self.camera_id)
         else:
-            self.cap = cv2.VideoCapture(camera_id, backend)
+            self.cap = cv2.VideoCapture(self.camera_id, self.backend)
             
         if not self.cap.isOpened():
-            raise RuntimeError(f"Cannot open camera {camera_id}")
+            raise RuntimeError(f"Cannot open camera {self.camera_id}")
         
         # Set buffer size to reduce latency (helps with MSMF issues)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -155,15 +172,26 @@ class ThreadSafeCameraReader:
                     f"Camera resolution ({self.width}x{self.height}) does not match "
                     f"calibration resolution {self.undistorter.resolution}"
                 )
-
-        self._latest_raw_frame = None
-        self._frame_lock = threading.Lock()
-        self._running = True
-        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._thread.start()
-        
-        # Wait a bit for first frame to be captured
-        time.sleep(0.2)
+    
+    def _reset_camera(self):
+        """Reset camera by closing and reopening it."""
+        print("🔄 Resetting camera...")
+        try:
+            # Close current camera
+            if hasattr(self, 'cap') and self.cap is not None:
+                self.cap.release()
+                time.sleep(0.5)  # Give camera time to fully release
+            
+            # Clear the latest frame
+            with self._frame_lock:
+                self._latest_raw_frame = None
+            
+            # Reinitialize camera
+            self._initialize_camera()
+            print("✅ Camera reset successful")
+        except Exception as e:
+            print(f"❌ Camera reset failed: {e}")
+            # Try to continue with existing camera if reset fails
 
     def _capture_loop(self):
         """Capture raw frames in background."""
@@ -177,7 +205,9 @@ class ThreadSafeCameraReader:
             if not ret:
                 consecutive_failures += 1
                 if consecutive_failures >= max_failures:
-                    print(f"⚠️ Failed to read frame {consecutive_failures} times. Camera may be disconnected.")
+                    print(f"⚠️ Failed to read frame {consecutive_failures} times. Resetting camera...")
+                    self._reset_camera()
+                    consecutive_failures = 0  # Reset counter after attempting reset
                     time.sleep(0.1)
                 else:
                     time.sleep(0.01)
