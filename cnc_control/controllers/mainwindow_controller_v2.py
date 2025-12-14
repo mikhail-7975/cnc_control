@@ -22,10 +22,10 @@ import re
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QListWidget,
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog,
-    QScrollArea, QGridLayout
+    QScrollArea, QGridLayout, QTreeView, QCheckBox
 )
 from PyQt6.QtCore import QTimer, Qt, QPoint, QRectF
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor, QFont, QShortcut, QKeySequence, QStandardItemModel, QStandardItem, QBrush
 import math
 # Try to import UI v2 - adjust class name if needed
 # Add project root to path for UI imports
@@ -47,11 +47,70 @@ from cnc_control.core.algorithms.segmentation import (
 )
 
 
+class ComponentTreeView(QTreeView):
+    """Кастомный QTreeView для списка компонентов с поддержкой переименования по Enter."""
+    
+    def __init__(self, parent=None, main_window_ref=None):
+        super().__init__(parent)
+        self.main_window_ref = main_window_ref
+    
+    def keyPressEvent(self, event):
+        """Обработка нажатия клавиш."""
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            # Если нажат Enter, пытаемся переименовать выбранный компонент
+            selection = self.selectedIndexes()
+            if selection:
+                index = selection[0]
+                model = self.model()
+                if model:
+                    item = model.itemFromIndex(index)
+                    if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
+                        if self.main_window_ref:
+                            self.main_window_ref._rename_component_from_tree(item)
+                        return
+        elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+            # Если нажат Delete/Backspace, удаляем выбранный компонент
+            selection = self.selectedIndexes()
+            if selection:
+                index = selection[0]
+                model = self.model()
+                if model:
+                    item = model.itemFromIndex(index)
+                    if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
+                        if self.main_window_ref:
+                            self.main_window_ref._delete_component_from_tree(item)
+                        return
+        
+        # Вызываем стандартный обработчик для других клавиш
+        super().keyPressEvent(event)
+    
+    def mousePressEvent(self, event):
+        """Обработка клика мыши для выбора компонента."""
+        super().mousePressEvent(event)
+        
+        # Если кликнули по элементу, пытаемся выбрать соответствующий bbox
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
+                model = self.model()
+                if model:
+                    item = model.itemFromIndex(index)
+                    if item and item.parent():  # Это дочерний элемент (компонент, а не изображение)
+                        if self.main_window_ref:
+                            # Проверяем, нажаты ли Ctrl или Shift для множественного выбора
+                            ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                            shift_pressed = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                            self.main_window_ref._select_bbox_from_tree(item, ctrl_pressed=ctrl_pressed, shift_pressed=shift_pressed)
+
+
 class MainWindowControllerV2(QMainWindow):
     def __init__(self):
         super().__init__()
         self.ui = Ui_MainWindowV2()
         self.ui.setupUi(self)
+        
+        # Enable fullscreen button by removing maximum size constraint
+        self.setMaximumSize(16777215, 16777215)  # QWIDGETSIZE_MAX equivalent
 
         # === Replace scroll area contents with QListWidget ===
         # For take image points
@@ -107,12 +166,55 @@ class MainWindowControllerV2(QMainWindow):
         # Reference to marking window to prevent garbage collection
         self.marking_window = None
         
-        # Etalon image display label
-        self.etalon_image_label = QLabel(self.ui.display_etalon_image_widget)
-        self.etalon_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.etalon_image_label.setScaledContents(False)
-        self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        # Preference: don't ask for delete confirmation
+        self.skip_delete_confirmation = False
+        
+        # Clipboard for bboxes copy/paste
+        self.bbox_clipboard = []  # List of bbox data: [x1, y1, x2, y2, angle, name]
+        
+        # Etalon image display widget with markup support
+        self.etalon_image_widget = ImageDisplayWidget(self.ui.display_etalon_image_widget)
+        self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
+        # Store reference to main window for bbox updates and auto-save
+        self.etalon_image_widget.main_window_ref = self
+        # Enable focus for keyboard events
+        self.etalon_image_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        
+        # Zoom settings for etalon preview
+        self.etalon_zoom_scale = 1.0
+        self.etalon_min_zoom = 0.1
+        self.etalon_max_zoom = 10.0
+        self.etalon_zoom_step = 0.1
+        self.etalon_initial_zoom_calculated = False
+        self.etalon_original_pixmap = None  # Store original unscaled pixmap
+        
         self.clear_etalon_display()
+        
+        # Replace QTableView with QTreeView for hierarchical component list
+        # Store reference to original table view
+        if hasattr(self.ui, 'component_tableView'):
+            # Create custom QTreeView to replace QTableView
+            self.component_tree_view = ComponentTreeView(main_window_ref=self)
+            self.component_tree_view.setObjectName("component_treeView")
+            # Replace the table view in the layout
+            layout = self.ui.component_scrollAreaWidgetContents.layout()
+            if layout:
+                # Find the table view in the layout
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    if item and item.widget() == self.ui.component_tableView:
+                        # Remove old table view
+                        layout.removeWidget(self.ui.component_tableView)
+                        self.ui.component_tableView.setParent(None)
+                        # Add tree view at the same position
+                        layout.insertWidget(i, self.component_tree_view)
+                        break
+                else:
+                    # If not found, just add it
+                    layout.addWidget(self.component_tree_view)
+        
+        # Initialize component list
+        self.update_component_list()
 
         # Connect signals
         self.setup_connections()
@@ -160,7 +262,19 @@ class MainWindowControllerV2(QMainWindow):
         self.ui.load_etalon_images_button.clicked.connect(self.load_etalon_images)
         self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
         self.ui.prev_etalon_image_button.clicked.connect(self.prev_etalon_image)
-        self.ui.mark_image_button.clicked.connect(self.open_mark_image_window)
+        # Hide the markup button - markup is now done directly on preview
+        self.ui.mark_image_button.setVisible(False)
+        # Connect keyboard shortcuts for saving bboxes and zooming
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        self.save_bboxes_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.save_bboxes_shortcut.activated.connect(self.save_current_etalon_bboxes)
+        # Zoom shortcuts
+        self.zoom_in_shortcut = QShortcut(QKeySequence("Ctrl+="), self)
+        self.zoom_in_shortcut.activated.connect(self.etalon_zoom_in)
+        self.zoom_in_plus_shortcut = QShortcut(QKeySequence("Ctrl++"), self)
+        self.zoom_in_plus_shortcut.activated.connect(self.etalon_zoom_in)
+        self.zoom_out_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)
+        self.zoom_out_shortcut.activated.connect(self.etalon_zoom_out)
         
         # Inspection buttons
         self.ui.load_control_photo_pushButton.clicked.connect(self.load_control_photo)
@@ -403,6 +517,9 @@ class MainWindowControllerV2(QMainWindow):
                 self.etalon_images = loaded_images
                 self.etalon_image_names = loaded_names
                 self.current_etalon_index = 0
+                # Reset zoom when loading new images
+                self.etalon_initial_zoom_calculated = False
+                self.etalon_zoom_scale = 1.0
                 self.display_current_etalon_image()
                 print(f"Загружено {len(self.etalon_images)} эталонных изображений")
             else:
@@ -421,6 +538,14 @@ class MainWindowControllerV2(QMainWindow):
             self.current_etalon_index = len(self.etalon_images) - 1
         
         try:
+            # Reset zoom calculation for new image (will recalculate initial fit)
+            self.etalon_initial_zoom_calculated = False
+            
+            # Clear bboxes before loading new image (they should already be cleared in next/prev methods)
+            # But clear here too as a safety measure
+            if hasattr(self, 'etalon_image_widget'):
+                self.etalon_image_widget.bounding_boxes = []
+            
             image = self.etalon_images[self.current_etalon_index]
             # Конвертируем BGR в RGB для Qt
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -429,17 +554,49 @@ class MainWindowControllerV2(QMainWindow):
             qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image)
             
-            # Масштабируем изображение под размер виджета
+            # Store original pixmap for zooming
+            self.etalon_original_pixmap = pixmap
+            
+            # Calculate initial zoom scale to fit widget (only on first display)
+            if not self.etalon_initial_zoom_calculated:
+                widget_width = self.ui.display_etalon_image_widget.width()
+                widget_height = self.ui.display_etalon_image_widget.height()
+                
+                if widget_width > 0 and widget_height > 0 and w > 0 and h > 0:
+                    scale_x = widget_width / w
+                    scale_y = widget_height / h
+                    # Use smaller scale to fit image completely
+                    self.etalon_zoom_scale = min(scale_x, scale_y) * 0.95  # 0.95 for small margin
+                    # Limit initial zoom scale to reasonable bounds
+                    self.etalon_zoom_scale = max(self.etalon_min_zoom, min(self.etalon_zoom_scale, self.etalon_max_zoom))
+                    self.etalon_initial_zoom_calculated = True
+            
+            # Apply zoom scaling
+            scaled_width = int(w * self.etalon_zoom_scale)
+            scaled_height = int(h * self.etalon_zoom_scale)
+            
+            # Scale pixmap
             scaled_pixmap = pixmap.scaled(
-                self.ui.display_etalon_image_widget.width(),
-                self.ui.display_etalon_image_widget.height(),
+                scaled_width,
+                scaled_height,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
             
-            self.etalon_image_label.setPixmap(scaled_pixmap)
-            self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+            # Set the pixmap in the ImageDisplayWidget
+            self.etalon_image_widget.set_image(scaled_pixmap)
+            self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
             self.ui.display_etalon_image_widget.setStyleSheet("")
+            
+            # Clear bboxes before loading (ensure clean state)
+            if hasattr(self, 'etalon_image_widget'):
+                self.etalon_image_widget.bounding_boxes = []
+            
+            # Load bboxes for the current image (will be scaled appropriately)
+            self.load_current_etalon_bboxes()
+            
+            # Обновляем список компонентов при загрузке изображения
+            self.update_component_list()
             
             self.update_etalon_image_label()
         except Exception as e:
@@ -454,10 +611,52 @@ class MainWindowControllerV2(QMainWindow):
             total = len(self.etalon_images)
             self.ui.etalon_image_number_label.setText(f"{current_num} / {total}")
 
+    def check_unnamed_bboxes(self):
+        """Проверить наличие неназванных bboxes на текущем изображении."""
+        if not hasattr(self, 'etalon_image_widget') or not self.etalon_image_widget.bounding_boxes:
+            return []
+        
+        unnamed_bboxes = []
+        for i, box in enumerate(self.etalon_image_widget.bounding_boxes):
+            x1, y1, x2, y2, angle, selected, name = box
+            if not name or not name.strip():
+                unnamed_bboxes.append(i)
+        
+        return unnamed_bboxes
+    
     def next_etalon_image(self):
         """Перейти к следующему эталонному изображению."""
         if not self.etalon_images:
             return
+        
+        # Проверяем наличие неназванных bboxes
+        unnamed_bboxes = self.check_unnamed_bboxes()
+        if unnamed_bboxes:
+            # Показываем предупреждение
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle("Неназванные компоненты")
+            msg_box.setText(
+                f"На текущем изображении найдено {len(unnamed_bboxes)} неназванных компонентов.\n\n"
+                "Что вы хотите сделать?"
+            )
+            btn_go_back = msg_box.addButton("Вернуться и задать имена", QMessageBox.ButtonRole.AcceptRole)
+            btn_continue = msg_box.addButton("Продолжить без изменений", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_go_back)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == btn_go_back:
+                # Пользователь хочет вернуться и задать имена
+                return
+        
+        # Save bboxes for current image before switching
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+            self.save_current_etalon_bboxes()
+        
+        # Clear bboxes before switching
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.bounding_boxes = []
+            self.etalon_image_widget.update()
         
         self.current_etalon_index = (self.current_etalon_index + 1) % len(self.etalon_images)
         self.display_current_etalon_image()
@@ -467,53 +666,659 @@ class MainWindowControllerV2(QMainWindow):
         if not self.etalon_images:
             return
         
+        # Проверяем наличие неназванных bboxes
+        unnamed_bboxes = self.check_unnamed_bboxes()
+        if unnamed_bboxes:
+            # Показываем предупреждение
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle("Неназванные компоненты")
+            msg_box.setText(
+                f"На текущем изображении найдено {len(unnamed_bboxes)} неназванных компонентов.\n\n"
+                "Что вы хотите сделать?"
+            )
+            btn_go_back = msg_box.addButton("Вернуться и задать имена", QMessageBox.ButtonRole.AcceptRole)
+            btn_continue = msg_box.addButton("Продолжить без изменений", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_go_back)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == btn_go_back:
+                # Пользователь хочет вернуться и задать имена
+                return
+        
+        # Save bboxes for current image before switching
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+            self.save_current_etalon_bboxes()
+        
+        # Clear bboxes before switching
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.bounding_boxes = []
+            self.etalon_image_widget.update()
+        
         self.current_etalon_index = (self.current_etalon_index - 1) % len(self.etalon_images)
         self.display_current_etalon_image()
 
     def clear_etalon_display(self):
         """Очистить отображение эталонного изображения."""
-        self.etalon_image_label.clear()
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.set_image(None)
+            self.etalon_image_widget.bounding_boxes = []
+            self.etalon_image_widget.update()
         self.ui.display_etalon_image_widget.setStyleSheet("background-color: black;")
-        self.etalon_image_label.move(0, 0)
-        self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        if hasattr(self, 'etalon_image_widget'):
+            self.etalon_image_widget.move(0, 0)
+            self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
 
     def open_mark_image_window(self):
-        """Открыть новое окно для разметки изображения."""
-        if not self.etalon_images or self.current_etalon_index < 0:
-            self.show_error("Нет изображения для разметки. Загрузите эталонные изображения.")
+        """Открыть новое окно для разметки изображения. DEPRECATED - markup is now done directly on preview."""
+        # This method is kept for backward compatibility but is no longer used
+        # Markup is now done directly on the preview
+        pass
+    
+    def get_current_etalon_image_name(self):
+        """Получить имя текущего эталонного изображения для сохранения bboxes."""
+        if self.current_etalon_index < 0 or not self.etalon_images:
+            return None
+        if self.current_etalon_index < len(self.etalon_image_names):
+            # Use the image name directly (e.g., "photo_0")
+            return self.etalon_image_names[self.current_etalon_index]
+        else:
+            # Fallback на номер, если имя недоступно
+            return f"image_{self.current_etalon_index}"
+    
+    def get_etalon_bboxes_file_path(self):
+        """Получить путь к единому файлу для сохранения всех bboxes."""
+        project_root = Path(__file__).parent.parent.parent
+        markup_dir = project_root / "markup_info"
+        markup_dir.mkdir(exist_ok=True)
+        return markup_dir / "bboxes.json"
+    
+    def save_current_etalon_bboxes(self):
+        """Сохранить bboxes текущего эталонного изображения в JSON файл."""
+        if not hasattr(self, 'etalon_image_widget') or not self.etalon_images or self.current_etalon_index < 0:
             return
         
         try:
-            # Получаем текущее изображение
-            current_image = self.etalon_images[self.current_etalon_index]
+            bboxes_file = self.get_etalon_bboxes_file_path()
+            bboxes = self.etalon_image_widget.bounding_boxes
             
-            # Если окно уже открыто, просто активируем его
-            if self.marking_window is not None and self.marking_window.isVisible():
-                self.marking_window.raise_()
-                self.marking_window.activateWindow()
+            # Загружаем существующие данные, если файл есть
+            all_bboxes_data = {}
+            if bboxes_file.exists():
+                try:
+                    with open(bboxes_file, 'r', encoding='utf-8') as f:
+                        all_bboxes_data = json.load(f)
+                except:
+                    all_bboxes_data = {}
+            
+            # Получаем имя текущего изображения
+            image_name = self.get_current_etalon_image_name()
+            if not image_name:
                 return
             
-            # Получаем имя изображения
-            if self.current_etalon_index < len(self.etalon_image_names):
-                image_name = self.etalon_image_names[self.current_etalon_index]
-            else:
-                # Fallback на номер, если имя недоступно
-                image_name = f"image_{self.current_etalon_index + 1}"
+            # Use current zoom scale for coordinate conversion
+            scale = self.etalon_zoom_scale
             
-            # Создаем и показываем новое окно как отдельное окно (не дочернее)
-            self.marking_window = ImageMarkingWindow(current_image, image_name=image_name, parent=None)
-            # Сохраняем ссылку на главное окно в окне разметки для очистки при закрытии
-            self.marking_window.main_window_ref = self
+            # Конвертируем текущие bboxes в список словарей для JSON
+            # Конвертируем координаты из масштабированного пространства в оригинальное
+            bboxes_data = []
+            for box in bboxes:
+                x1, y1, x2, y2, angle, selected, name = box
+                # Конвертируем координаты обратно в оригинальный размер изображения
+                orig_x1 = x1 / scale
+                orig_y1 = y1 / scale
+                orig_x2 = x2 / scale
+                orig_y2 = y2 / scale
+                bboxes_data.append({
+                    'x1': float(orig_x1),
+                    'y1': float(orig_y1),
+                    'x2': float(orig_x2),
+                    'y2': float(orig_y2),
+                    'angle': float(angle),
+                    'name': name if name else ""
+                })
             
-            # Устанавливаем размер окна такой же, как у главного окна
-            main_window_size = self.size()
-            self.marking_window.resize(main_window_size)
+            # Обновляем данные для текущего изображения
+            all_bboxes_data[image_name] = bboxes_data
             
-            self.marking_window.show()
-            self.marking_window.raise_()  # Поднимаем окно на передний план
-            self.marking_window.activateWindow()  # Активируем окно
+            # Сохраняем все данные обратно в JSON
+            with open(bboxes_file, 'w', encoding='utf-8') as f:
+                json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+            
+            # Обновляем список компонентов после сохранения
+            self.update_component_list()
         except Exception as e:
-            self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
+            print(f"Ошибка при сохранении bboxes: {str(e)}")
+    
+    def load_current_etalon_bboxes(self):
+        """Загрузить bboxes из JSON файла для текущего эталонного изображения."""
+        if not hasattr(self, 'etalon_image_widget') or not self.etalon_images or self.current_etalon_index < 0:
+            return
+        
+        try:
+            bboxes_file = self.get_etalon_bboxes_file_path()
+            
+            if not bboxes_file.exists():
+                return  # Нет сохраненных bboxes
+            
+            # Загружаем из JSON
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            # Получаем имя текущего изображения
+            image_name = self.get_current_etalon_image_name()
+            if not image_name:
+                return
+            
+            # Try current format first (image name only)
+            bboxes_data = None
+            if image_name in all_bboxes_data:
+                bboxes_data = all_bboxes_data[image_name]
+            else:
+                # Fallback to old format (with index prefix) for backward compatibility
+                if self.current_etalon_index < len(self.etalon_image_names):
+                    old_name = f"{self.current_etalon_index}_{self.etalon_image_names[self.current_etalon_index]}"
+                    if old_name in all_bboxes_data:
+                        bboxes_data = all_bboxes_data[old_name]
+            
+            if not bboxes_data:
+                return  # Нет bboxes для этого изображения
+            
+            # Use current zoom scale for coordinate conversion
+            scale = self.etalon_zoom_scale
+            
+            # Конвертируем обратно в формат (x1, y1, x2, y2, angle, selected, name)
+            # Конвертируем координаты из оригинального пространства в текущее масштабированное
+            loaded_bboxes = []
+            for bbox_data in bboxes_data:
+                # Конвертируем координаты из оригинального размера в текущий масштаб
+                scaled_x1 = bbox_data['x1'] * scale
+                scaled_y1 = bbox_data['y1'] * scale
+                scaled_x2 = bbox_data['x2'] * scale
+                scaled_y2 = bbox_data['y2'] * scale
+                loaded_bboxes.append((
+                    scaled_x1,
+                    scaled_y1,
+                    scaled_x2,
+                    scaled_y2,
+                    bbox_data.get('angle', 0.0),
+                    False,  # selected = False по умолчанию
+                    bbox_data.get('name', '')
+                ))
+            
+            # Устанавливаем загруженные bboxes
+            self.etalon_image_widget.bounding_boxes = loaded_bboxes
+            self.etalon_image_widget.update()  # Обновляем отображение
+            
+        except Exception as e:
+            print(f"Ошибка при загрузке bboxes: {str(e)}")
+    
+    def update_component_list(self):
+        """Обновить список компонентов в дереве, сгруппированный по именам изображений."""
+        try:
+            # Use tree view if available, otherwise fall back to table view
+            tree_view = getattr(self, 'component_tree_view', None)
+            table_view = getattr(self.ui, 'component_tableView', None)
+            view = tree_view if tree_view else table_view
+            
+            if not view:
+                return
+            
+            bboxes_file = self.get_etalon_bboxes_file_path()
+            
+            if not bboxes_file.exists():
+                # Если файла нет, очищаем вид
+                model = QStandardItemModel()
+                model.setHorizontalHeaderLabels(["Component Name"])
+                view.setModel(model)
+                return
+            
+            # Загружаем все bboxes из JSON
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            # Получаем список загруженных изображений
+            loaded_image_names = None
+            if hasattr(self, 'etalon_image_names') and self.etalon_image_names:
+                loaded_image_names = set(self.etalon_image_names)
+            
+            # Если нет загруженных изображений, показываем пустой список
+            if loaded_image_names is None or len(loaded_image_names) == 0:
+                model = QStandardItemModel()
+                model.setHorizontalHeaderLabels(["Component Name"])
+                view.setModel(model)
+                return
+            
+            # Создаем модель для дерева
+            model = QStandardItemModel()
+            model.setHorizontalHeaderLabels(["Component Name"])
+            
+            # Группируем компоненты по именам изображений
+            # Светло-красный цвет для неназванных компонентов
+            light_red = QColor(255, 200, 200)  # Light red color
+            light_red_brush = QBrush(light_red)
+            
+            # Зеленый цвет для выбранного компонента
+            green = QColor(200, 255, 200)  # Light green color
+            green_brush = QBrush(green)
+            
+            # Желтый цвет для наведенного компонента
+            yellow = QColor(255, 255, 200)  # Light yellow color
+            yellow_brush = QBrush(yellow)
+            
+            # Получаем информацию о выбранных bboxes (если есть)
+            selected_image_name = None
+            selected_bbox_indices = set()
+            if hasattr(self, 'etalon_image_widget'):
+                if hasattr(self.etalon_image_widget, 'selected_box_indices') and self.etalon_image_widget.selected_box_indices:
+                    selected_image_name = self.get_current_etalon_image_name()
+                    selected_bbox_indices = self.etalon_image_widget.selected_box_indices
+                elif hasattr(self.etalon_image_widget, 'selected_box_index') and self.etalon_image_widget.selected_box_index is not None:
+                    # Обратная совместимость
+                    if self.etalon_image_widget.selected_box_index < len(self.etalon_image_widget.bounding_boxes):
+                        selected_image_name = self.get_current_etalon_image_name()
+                        selected_bbox_indices = {self.etalon_image_widget.selected_box_index}
+            
+            # Получаем информацию о наведенном bbox (если есть)
+            hovered_image_name = None
+            hovered_bbox_index = None
+            if hasattr(self, 'etalon_image_widget'):
+                if hasattr(self.etalon_image_widget, 'hovered_box_index') and self.etalon_image_widget.hovered_box_index is not None:
+                    hovered_image_name = self.get_current_etalon_image_name()
+                    hovered_bbox_index = self.etalon_image_widget.hovered_box_index
+            
+            # Фильтруем только изображения из загруженных
+            for image_name in sorted(all_bboxes_data.keys()):
+                # Пропускаем изображения, которые не загружены
+                if image_name not in loaded_image_names:
+                    continue
+                bboxes_data = all_bboxes_data[image_name]
+                
+                # Создаем родительский элемент для изображения
+                image_item = QStandardItem(image_name)
+                image_item.setEditable(False)
+                
+                # Добавляем компоненты этого изображения как дочерние элементы
+                has_components = False
+                unnamed_counter = 1  # Счетчик для неназванных компонентов
+                
+                for bbox_index, bbox_data in enumerate(bboxes_data):
+                    component_name = bbox_data.get('name', '').strip()
+                    
+                    # Проверяем, является ли этот компонент выбранным или наведенным
+                    is_selected = (image_name == selected_image_name and 
+                                  bbox_index in selected_bbox_indices)
+                    is_hovered = (image_name == hovered_image_name and 
+                                 bbox_index == hovered_bbox_index)
+                    
+                    if component_name:
+                        # Компонент с именем
+                        has_components = True
+                        component_item = QStandardItem(component_name)
+                        component_item.setEditable(False)
+                        # Применяем фон: зеленый если выбран, желтый если наведен
+                        if is_selected:
+                            component_item.setBackground(green_brush)
+                        elif is_hovered:
+                            component_item.setBackground(yellow_brush)
+                        # Добавляем как дочерний элемент
+                        image_item.appendRow(component_item)
+                    else:
+                        # Неназванный компонент - показываем как "UnnamedN"
+                        has_components = True
+                        unnamed_name = f"Unnamed{unnamed_counter}"
+                        component_item = QStandardItem(unnamed_name)
+                        component_item.setEditable(False)
+                        # Применяем фон: зеленый если выбран, желтый если наведен, иначе светло-красный
+                        if is_selected:
+                            component_item.setBackground(green_brush)
+                        elif is_hovered:
+                            component_item.setBackground(yellow_brush)
+                        else:
+                            component_item.setBackground(light_red_brush)
+                        # Добавляем как дочерний элемент
+                        image_item.appendRow(component_item)
+                        unnamed_counter += 1
+                
+                # Если есть компоненты, добавляем изображение в модель
+                if has_components:
+                    model.appendRow(image_item)
+            
+            # Устанавливаем модель в вид
+            view.setModel(model)
+            
+            # Настраиваем дерево
+            if tree_view:
+                # Раскрываем все элементы по умолчанию
+                view.expandAll()
+                # Настраиваем ширину колонки
+                view.setColumnWidth(0, 300)
+            else:
+                # Для таблицы настраиваем ширину колонок
+                view.setColumnWidth(0, 200)
+                view.setColumnWidth(1, 200)
+            
+        except Exception as e:
+            print(f"Ошибка при обновлении списка компонентов: {str(e)}")
+    
+    def _rename_component_from_tree(self, item):
+        """Переименовать компонент из дерева компонентов."""
+        if not item or not item.parent():
+            return
+        
+        # Получаем имя компонента и изображения
+        component_name = item.text()
+        image_item = item.parent()
+        image_name = image_item.text()
+        
+        # Определяем, является ли это неназванным компонентом
+        is_unnamed = component_name.startswith("Unnamed")
+        
+        # Получаем текущее имя (пустое для неназванных)
+        current_name = "" if is_unnamed else component_name
+        
+        # Открываем диалог для ввода имени
+        text, ok = QInputDialog.getText(
+            self,
+            "Имя компонента",
+            f"Введите имя для компонента (изображение: {image_name}):",
+            text=current_name
+        )
+        
+        if ok and text and text.strip():
+            new_name = text.strip()
+            
+            # Находим соответствующий bbox и обновляем его имя
+            if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget.bounding_boxes:
+                # Получаем индекс компонента в списке
+                bboxes = self.etalon_image_widget.bounding_boxes
+                
+                # Загружаем bboxes для этого изображения из файла
+                bboxes_file = self.get_etalon_bboxes_file_path()
+                if bboxes_file.exists():
+                    with open(bboxes_file, 'r', encoding='utf-8') as f:
+                        all_bboxes_data = json.load(f)
+                    
+                    if image_name in all_bboxes_data:
+                        bboxes_data = all_bboxes_data[image_name]
+                        
+                        # Находим индекс компонента в списке
+                        # Нужно найти правильный индекс, учитывая порядок в дереве
+                        component_index = self._find_component_index_in_tree(item, image_item)
+                        
+                        if component_index is not None and component_index < len(bboxes_data):
+                            # Обновляем имя в данных
+                            bboxes_data[component_index]['name'] = new_name
+                            
+                            # Сохраняем обновленные данные
+                            with open(bboxes_file, 'w', encoding='utf-8') as f:
+                                json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+                            
+                            # Если это текущее изображение, обновляем bboxes в виджете
+                            current_image_name = self.get_current_etalon_image_name()
+                            if current_image_name == image_name:
+                                # Перезагружаем bboxes для текущего изображения
+                                self.load_current_etalon_bboxes()
+                            
+                            # Обновляем список компонентов
+                            self.update_component_list()
+                            
+                            # Выделяем переименованный компонент в дереве
+                            self._select_component_in_tree(image_name, new_name)
+    
+    def _delete_component_from_tree(self, item):
+        """Удалить компонент из дерева компонентов."""
+        if not item or not item.parent():
+            return
+        
+        # Получаем имя компонента и изображения
+        component_name = item.text()
+        image_item = item.parent()
+        image_name = image_item.text()
+        
+        # Проверяем, нужно ли показывать подтверждение
+        if self.skip_delete_confirmation:
+            # Пропускаем диалог, сразу удаляем
+            pass
+        else:
+            # Подтверждение удаления
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Question)
+            msg_box.setWindowTitle("Удаление компонента")
+            msg_box.setText(f"Вы уверены, что хотите удалить компонент '{component_name}' из изображения '{image_name}'?")
+            
+            # Добавляем чекбокс "Больше не спрашивать"
+            checkbox = QCheckBox("Больше не спрашивать")
+            msg_box.setCheckBox(checkbox)
+            
+            btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
+            btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_no)
+            msg_box.exec()
+            
+            # Сохраняем настройку, если чекбокс отмечен
+            if checkbox.isChecked():
+                self.skip_delete_confirmation = True
+            
+            if msg_box.clickedButton() != btn_yes:
+                return
+        
+        # Загружаем bboxes для этого изображения из файла
+        bboxes_file = self.get_etalon_bboxes_file_path()
+        if bboxes_file.exists():
+            with open(bboxes_file, 'r', encoding='utf-8') as f:
+                all_bboxes_data = json.load(f)
+            
+            if image_name in all_bboxes_data:
+                bboxes_data = all_bboxes_data[image_name]
+                
+                # Находим индекс компонента в списке bboxes
+                component_index = item.row()
+                
+                if component_index is not None and component_index < len(bboxes_data):
+                    # Удаляем bbox из данных
+                    del bboxes_data[component_index]
+                    
+                    # Если список пуст, удаляем изображение из данных
+                    if not bboxes_data:
+                        del all_bboxes_data[image_name]
+                    
+                    # Сохраняем обновленные данные
+                    with open(bboxes_file, 'w', encoding='utf-8') as f:
+                        json.dump(all_bboxes_data, f, indent=2, ensure_ascii=False)
+                    
+                    # Если это текущее изображение, обновляем bboxes в виджете
+                    current_image_name = self.get_current_etalon_image_name()
+                    if current_image_name == image_name:
+                        # Перезагружаем bboxes для текущего изображения
+                        self.load_current_etalon_bboxes()
+                    
+                    # Обновляем список компонентов
+                    self.update_component_list()
+    
+    def _find_component_index_in_tree(self, component_item, image_item):
+        """Найти индекс компонента в списке bboxes по его позиции в дереве."""
+        # Получаем позицию компонента среди всех дочерних элементов изображения
+        # Это соответствует порядку в bboxes_data, так как мы добавляем их в том же порядке
+        row = component_item.row()
+        return row
+    
+    def _select_bbox_from_tree(self, item, ctrl_pressed=False, shift_pressed=False):
+        """Выбрать bbox на изображении при клике на элемент в дереве компонентов."""
+        if not item or not item.parent():
+            return
+        
+        # Получаем имя компонента и изображения
+        component_name = item.text()
+        image_item = item.parent()
+        image_name = image_item.text()
+        
+        # Получаем индекс компонента в дереве
+        component_index = item.row()
+        
+        # Переключаемся на нужное изображение, если оно не текущее
+        current_image_name = self.get_current_etalon_image_name()
+        if current_image_name != image_name:
+            # Находим индекс изображения в списке
+            if hasattr(self, 'etalon_image_names') and image_name in self.etalon_image_names:
+                image_index = self.etalon_image_names.index(image_name)
+                if image_index >= 0:
+                    self.current_etalon_index = image_index
+                    self.display_current_etalon_image()
+                    # Ждем немного, чтобы изображение и bboxes загрузились, затем выбираем bbox
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(200, lambda: self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed, shift_pressed=shift_pressed))
+                    return
+        
+        # Если изображение уже текущее, сразу выбираем bbox
+        self._select_bbox_by_index(component_index, ctrl_pressed=ctrl_pressed, shift_pressed=shift_pressed)
+    
+    def _select_bbox_by_index(self, bbox_index, ctrl_pressed=False, shift_pressed=False):
+        """Выбрать bbox по индексу в текущем изображении."""
+        if not hasattr(self, 'etalon_image_widget'):
+            return
+        
+        if (bbox_index is not None and 
+            bbox_index < len(self.etalon_image_widget.bounding_boxes)):
+            
+            # Инициализируем selected_box_indices, если его нет
+            if not hasattr(self.etalon_image_widget, 'selected_box_indices'):
+                self.etalon_image_widget.selected_box_indices = set()
+            
+            if shift_pressed:
+                # Range selection: выбираем все bboxes от последнего выбранного до текущего
+                if self.etalon_image_widget.selected_box_indices:
+                    # Находим последний выбранный индекс (или используем selected_box_index)
+                    last_selected = self.etalon_image_widget.selected_box_index if self.etalon_image_widget.selected_box_index is not None else next(iter(self.etalon_image_widget.selected_box_indices))
+                    # Выбираем диапазон от last_selected до bbox_index
+                    start_idx = min(last_selected, bbox_index)
+                    end_idx = max(last_selected, bbox_index)
+                    # Добавляем все индексы в диапазоне к выбору
+                    for idx in range(start_idx, end_idx + 1):
+                        if idx < len(self.etalon_image_widget.bounding_boxes):
+                            self.etalon_image_widget.selected_box_indices.add(idx)
+                    self.etalon_image_widget.selected_box_index = bbox_index
+                else:
+                    # Если нет предыдущего выбора, просто выбираем текущий
+                    self.etalon_image_widget.selected_box_indices = {bbox_index}
+                    self.etalon_image_widget.selected_box_index = bbox_index
+            elif ctrl_pressed:
+                # Множественный выбор: добавляем/удаляем из выбора
+                if bbox_index in self.etalon_image_widget.selected_box_indices:
+                    # Удаляем из выбора
+                    self.etalon_image_widget.selected_box_indices.remove(bbox_index)
+                    if self.etalon_image_widget.selected_box_index == bbox_index:
+                        # Если это был последний выбранный, обновляем его
+                        self.etalon_image_widget.selected_box_index = next(iter(self.etalon_image_widget.selected_box_indices)) if self.etalon_image_widget.selected_box_indices else None
+                else:
+                    # Добавляем к выбору
+                    self.etalon_image_widget.selected_box_indices.add(bbox_index)
+                    self.etalon_image_widget.selected_box_index = bbox_index
+            else:
+                # Одиночный выбор: очищаем предыдущий выбор
+                self.etalon_image_widget.selected_box_indices = {bbox_index}
+                self.etalon_image_widget.selected_box_index = bbox_index
+            
+            # Обновляем флаг выбранности для всех bboxes
+            for i, box in enumerate(self.etalon_image_widget.bounding_boxes):
+                x1, y1, x2, y2, angle, _, name = box
+                self.etalon_image_widget.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.etalon_image_widget.selected_box_indices, name)
+            
+            # Обновляем отображение
+            self.etalon_image_widget.update()
+            
+            # Обновляем список компонентов для подсветки
+            self.update_component_list()
+    
+    def _select_component_in_tree(self, image_name, component_name):
+        """Выделить компонент в дереве по имени изображения и компонента."""
+        if not hasattr(self, 'component_tree_view'):
+            return
+        
+        model = self.component_tree_view.model()
+        if not model:
+            return
+        
+        # Ищем изображение
+        for i in range(model.rowCount()):
+            image_item = model.item(i)
+            if image_item and image_item.text() == image_name:
+                # Ищем компонент в этом изображении
+                for j in range(image_item.rowCount()):
+                    component_item = image_item.child(j)
+                    if component_item and component_item.text() == component_name:
+                        # Выделяем компонент
+                        index = model.indexFromItem(component_item)
+                        self.component_tree_view.setCurrentIndex(index)
+                        return
+    
+    def etalon_zoom_in(self):
+        """Увеличить масштаб эталонного изображения."""
+        if not hasattr(self, 'etalon_original_pixmap') or self.etalon_original_pixmap is None:
+            return
+        
+        old_scale = self.etalon_zoom_scale
+        self.etalon_zoom_scale = min(self.etalon_zoom_scale + self.etalon_zoom_step, self.etalon_max_zoom)
+        if old_scale != self.etalon_zoom_scale:
+            self._update_etalon_bboxes_scale(old_scale, self.etalon_zoom_scale)
+            self._redisplay_etalon_with_zoom()
+    
+    def etalon_zoom_out(self):
+        """Уменьшить масштаб эталонного изображения."""
+        if not hasattr(self, 'etalon_original_pixmap') or self.etalon_original_pixmap is None:
+            return
+        
+        old_scale = self.etalon_zoom_scale
+        self.etalon_zoom_scale = max(self.etalon_zoom_scale - self.etalon_zoom_step, self.etalon_min_zoom)
+        if old_scale != self.etalon_zoom_scale:
+            self._update_etalon_bboxes_scale(old_scale, self.etalon_zoom_scale)
+            self._redisplay_etalon_with_zoom()
+    
+    def _update_etalon_bboxes_scale(self, old_scale, new_scale):
+        """Обновить координаты bboxes при изменении масштаба."""
+        if old_scale == 0 or new_scale == 0:
+            return
+        scale_factor = new_scale / old_scale
+        bboxes = self.etalon_image_widget.bounding_boxes
+        updated_bboxes = []
+        for box in bboxes:
+            x1, y1, x2, y2, angle, selected, name = box
+            updated_bboxes.append((
+                x1 * scale_factor,
+                y1 * scale_factor,
+                x2 * scale_factor,
+                y2 * scale_factor,
+                angle,
+                selected,
+                name
+            ))
+        self.etalon_image_widget.bounding_boxes = updated_bboxes
+        self.etalon_image_widget.update()
+    
+    def _redisplay_etalon_with_zoom(self):
+        """Перерисовать эталонное изображение с текущим масштабом."""
+        if not hasattr(self, 'etalon_original_pixmap') or self.etalon_original_pixmap is None:
+            return
+        
+        pixmap = self.etalon_original_pixmap
+        w = pixmap.width()
+        h = pixmap.height()
+        
+        # Apply zoom scaling
+        scaled_width = int(w * self.etalon_zoom_scale)
+        scaled_height = int(h * self.etalon_zoom_scale)
+        
+        # Scale pixmap
+        scaled_pixmap = pixmap.scaled(
+            scaled_width,
+            scaled_height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        
+        # Set the pixmap in the ImageDisplayWidget
+        self.etalon_image_widget.set_image(scaled_pixmap)
+        self.etalon_image_widget.update()
 
     # === Inspection handlers ===
     
@@ -1337,8 +2142,8 @@ class MainWindowControllerV2(QMainWindow):
         """Обработка изменения размера главного окна."""
         if self.image_label is not None:
             self.image_label.resize(self.ui.image_displayer.size())
-        if self.etalon_image_label is not None:
-            self.etalon_image_label.resize(self.ui.display_etalon_image_widget.size())
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget is not None:
+            self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
             # Перерисовываем изображение при изменении размера
             if self.etalon_images and self.current_etalon_index >= 0:
                 self.display_current_etalon_image()
@@ -1417,6 +2222,10 @@ class MainWindowControllerV2(QMainWindow):
         QMessageBox.critical(self, "Ошибка", message)
 
     def closeEvent(self, event):
+        # Save all bboxes before closing to avoid losing changes
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget:
+            self.save_current_etalon_bboxes()
+        
         if self.cam:
             self.cam.stop()
         if self.driver:
@@ -1438,7 +2247,8 @@ class ImageDisplayWidget(QWidget):
         self.bounding_boxes = []  # Список bounding boxes: [x1, y1, x2, y2, angle, selected, name]
         self.current_box_start = None  # Начальная точка текущего бокса
         self.drawing_box = False
-        self.selected_box_index = None
+        self.selected_box_index = None  # Для обратной совместимости (последний выбранный)
+        self.selected_box_indices = set()  # Множество индексов выбранных bboxes
         self.rotation_mode = False
         self.rotation_start_angle = 0
         self.image_offset = QPoint(0, 0)
@@ -1453,6 +2263,11 @@ class ImageDisplayWidget(QWidget):
         self.drag_start_box = None  # Original box coordinates when drag started
         self.rotation_base_angle = 0.0
         self.rotation_start_pointer_angle = 0.0
+        self.double_click_panning = False  # Флаг панорамирования после двойного клика
+        self.selection_rect_start = None  # Начальная точка для прямоугольника выбора
+        self.selection_rect_end = None  # Конечная точка для прямоугольника выбора
+        self.drawing_selection_rect = False  # Флаг рисования прямоугольника выбора
+        self.hovered_box_index = None  # Индекс bbox, над которым находится курсор
         
     def set_image(self, pixmap):
         """Установить изображение для отображения."""
@@ -1460,20 +2275,36 @@ class ImageDisplayWidget(QWidget):
         self.display_pixmap = pixmap
         self.update()
     
+    def is_image_upscaled(self):
+        """Проверить, увеличено ли изображение (больше размера виджета)."""
+        if not self.display_pixmap:
+            return False
+        pixmap_size = self.display_pixmap.size()
+        widget_size = self.size()
+        return pixmap_size.width() > widget_size.width() or pixmap_size.height() > widget_size.height()
+    
     def get_box_corners(self, box):
         """Получить координаты углов бокса с учетом поворота."""
         x1, y1, x2, y2, angle, _, _ = box
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
-        width = abs(x2 - x1)
-        height = abs(y2 - y1)
         
-        # Углы без поворота
+        # Нормализуем координаты, чтобы гарантировать правильный порядок углов
+        # Это важно для правильного расчета внутренней области
+        norm_x1 = min(x1, x2)
+        norm_y1 = min(y1, y2)
+        norm_x2 = max(x1, x2)
+        norm_y2 = max(y1, y2)
+        
+        center_x = (norm_x1 + norm_x2) / 2
+        center_y = (norm_y1 + norm_y2) / 2
+        width = abs(norm_x2 - norm_x1)
+        height = abs(norm_y2 - norm_y1)
+        
+        # Углы без поворота (используем нормализованные координаты)
         corners = [
-            (x1, y1),  # top-left
-            (x2, y1),  # top-right
-            (x2, y2),  # bottom-right
-            (x1, y2)   # bottom-left
+            (norm_x1, norm_y1),  # top-left
+            (norm_x2, norm_y1),  # top-right
+            (norm_x2, norm_y2),  # bottom-right
+            (norm_x1, norm_y2)   # bottom-left
         ]
         
         # Применяем поворот
@@ -1551,6 +2382,54 @@ class ImageDisplayWidget(QWidget):
         
         return None, None
     
+    def constrain_pan_offset(self):
+        """Ограничить pan_offset так, чтобы изображение не выходило за границы виджета."""
+        if not self.display_pixmap:
+            self.pan_offset = QPoint(0, 0)
+            return
+        
+        pixmap_rect = self.display_pixmap.rect()
+        widget_rect = self.rect()
+        
+        # Если изображение меньше виджета, сбрасываем pan_offset
+        if pixmap_rect.width() <= widget_rect.width() and pixmap_rect.height() <= widget_rect.height():
+            self.pan_offset = QPoint(0, 0)
+            return
+        
+        # Базовое смещение (центрирование)
+        base_x = (widget_rect.width() - pixmap_rect.width()) // 2
+        base_y = (widget_rect.height() - pixmap_rect.height()) // 2
+        
+        # Ограничиваем по горизонтали
+        if pixmap_rect.width() > widget_rect.width():
+            # Финальная позиция: x = base_x + pan_offset.x()
+            # Ограничения: 0 <= x <= widget_width - pixmap_width
+            # Отсюда: -base_x <= pan_offset.x() <= widget_width - pixmap_width - base_x
+            # Когда base_x отрицательный (изображение больше виджета):
+            # -base_x положительный (показывает левый край)
+            # widget_width - pixmap_width - base_x отрицательный (показывает правый край)
+            min_x = widget_rect.width() - pixmap_rect.width() - base_x  # Минимальное значение (показывает правый край)
+            max_x = -base_x  # Максимальное значение (показывает левый край)
+            self.pan_offset.setX(max(min_x, min(self.pan_offset.x(), max_x)))
+        else:
+            # Изображение меньше виджета по ширине - не позволяем панорамирование
+            self.pan_offset.setX(0)
+        
+        # Ограничиваем по вертикали
+        if pixmap_rect.height() > widget_rect.height():
+            # Финальная позиция: y = base_y + pan_offset.y()
+            # Ограничения: 0 <= y <= widget_height - pixmap_height
+            # Отсюда: -base_y <= pan_offset.y() <= widget_height - pixmap_height - base_y
+            # Когда base_y отрицательный (изображение больше виджета):
+            # -base_y положительный (показывает верхний край)
+            # widget_height - pixmap_height - base_y отрицательный (показывает нижний край)
+            min_y = widget_rect.height() - pixmap_rect.height() - base_y  # Минимальное значение (показывает нижний край)
+            max_y = -base_y  # Максимальное значение (показывает верхний край)
+            self.pan_offset.setY(max(min_y, min(self.pan_offset.y(), max_y)))
+        else:
+            # Изображение меньше виджета по высоте - не позволяем панорамирование
+            self.pan_offset.setY(0)
+    
     def paintEvent(self, event):
         """Отрисовка изображения и bounding boxes."""
         painter = QPainter(self)
@@ -1558,11 +2437,21 @@ class ImageDisplayWidget(QWidget):
         
         # Рисуем изображение
         if self.display_pixmap:
+            # Ограничиваем pan_offset перед отрисовкой
+            self.constrain_pan_offset()
+            
             # Центрируем изображение и применяем смещение панорамирования
             pixmap_rect = self.display_pixmap.rect()
             widget_rect = self.rect()
-            x = (widget_rect.width() - pixmap_rect.width()) // 2 + self.pan_offset.x()
-            y = (widget_rect.height() - pixmap_rect.height()) // 2 + self.pan_offset.y()
+            # Если изображение меньше виджета, не применяем pan_offset (чтобы избежать пустых полей)
+            if pixmap_rect.width() <= widget_rect.width() and pixmap_rect.height() <= widget_rect.height():
+                # Изображение меньше виджета - центрируем без pan_offset
+                x = (widget_rect.width() - pixmap_rect.width()) // 2
+                y = (widget_rect.height() - pixmap_rect.height()) // 2
+            else:
+                # Изображение больше виджета - применяем pan_offset для панорамирования
+                x = (widget_rect.width() - pixmap_rect.width()) // 2 + self.pan_offset.x()
+                y = (widget_rect.height() - pixmap_rect.height()) // 2 + self.pan_offset.y()
             painter.drawPixmap(x, y, self.display_pixmap)
             self.image_offset = QPoint(x, y)
         else:
@@ -1571,11 +2460,18 @@ class ImageDisplayWidget(QWidget):
         # Рисуем bounding boxes
         for i, box in enumerate(self.bounding_boxes):
             x1, y1, x2, y2, angle, selected, name = box
-            is_selected = (i == self.selected_box_index)
+            is_selected = (i in self.selected_box_indices) if hasattr(self, 'selected_box_indices') else (i == self.selected_box_index)
+            
+            # Нормализуем координаты, чтобы гарантировать правильный порядок (x1 < x2, y1 < y2)
+            # Это важно для правильного расчета внутренней области независимо от направления рисования
+            norm_x1 = min(x1, x2)
+            norm_y1 = min(y1, y2)
+            norm_x2 = max(x1, x2)
+            norm_y2 = max(y1, y2)
             
             # Преобразуем координаты с учетом смещения изображения
-            p1 = QPoint(int(x1) + self.image_offset.x(), int(y1) + self.image_offset.y())
-            p2 = QPoint(int(x2) + self.image_offset.x(), int(y2) + self.image_offset.y())
+            p1 = QPoint(int(norm_x1) + self.image_offset.x(), int(norm_y1) + self.image_offset.y())
+            p2 = QPoint(int(norm_x2) + self.image_offset.x(), int(norm_y2) + self.image_offset.y())
             
             # Вычисляем центр и углы прямоугольника
             center_x = (p1.x() + p2.x()) / 2
@@ -1585,9 +2481,8 @@ class ImageDisplayWidget(QWidget):
             width = abs(p2.x() - p1.x())
             height = abs(p2.y() - p1.y())
             
-            # Создаем прямоугольник
+            # Создаем прямоугольник (координаты уже нормализованы)
             rect = QRectF(p1.x(), p1.y(), width, height)
-            rect = rect.normalized()
             
             # Применяем поворот
             painter.save()
@@ -1595,8 +2490,17 @@ class ImageDisplayWidget(QWidget):
             painter.rotate(angle)
             painter.translate(-center)
             
+            # Определяем цвет в зависимости от состояния
+            is_hovered = (i == self.hovered_box_index) if hasattr(self, 'hovered_box_index') else False
+            if is_selected:
+                box_color = QColor(0, 255, 0)  # Зеленый для выбранного
+            elif is_hovered:
+                box_color = QColor(255, 255, 0)  # Желтый для наведения
+            else:
+                box_color = QColor(255, 0, 0)  # Красный для обычного
+            
             # Рисуем прямоугольник
-            pen = QPen(QColor(0, 255, 0) if is_selected else QColor(255, 0, 0), 2)
+            pen = QPen(box_color, 2)
             painter.setPen(pen)
             painter.drawRect(rect)
             
@@ -1609,7 +2513,7 @@ class ImageDisplayWidget(QWidget):
                 QRectF(rect.left() - corner_size/2, rect.bottom() - corner_size/2, corner_size, corner_size)
             ]
             for corner in corners:
-                painter.fillRect(corner, pen.color())
+                painter.fillRect(corner, box_color)
             
             painter.restore()
             
@@ -1631,22 +2535,43 @@ class ImageDisplayWidget(QWidget):
                                  text_rect.width() + 4, text_rect.height() + 4)
                 painter.fillRect(bg_rect, QColor(0, 0, 0, 180))  # Полупрозрачный черный фон
                 
+                # Определяем цвет текста: желтый для наведения, белый для остальных
+                text_color = QColor(255, 255, 0) if is_hovered else QColor(255, 255, 255)
+                
                 # Рисуем текст
-                painter.setPen(QColor(255, 255, 255))
+                painter.setPen(text_color)
                 painter.drawText(text_x, text_y, name)
                 painter.restore()
+        
+        # Рисуем прямоугольник выбора (если рисуется)
+        if self.drawing_selection_rect and self.selection_rect_start and self.selection_rect_end:
+            rect_x1 = min(self.selection_rect_start.x(), self.selection_rect_end.x()) + self.image_offset.x()
+            rect_y1 = min(self.selection_rect_start.y(), self.selection_rect_end.y()) + self.image_offset.y()
+            rect_x2 = max(self.selection_rect_start.x(), self.selection_rect_end.x()) + self.image_offset.x()
+            rect_y2 = max(self.selection_rect_start.y(), self.selection_rect_end.y()) + self.image_offset.y()
             
-            # Рисуем текущий бокс при создании
-            if self.drawing_box and self.current_box_start:
-                temp_rect = QRectF(
-                    min(self.current_box_start.x(), self.last_mouse_pos.x()) + self.image_offset.x(),
-                    min(self.current_box_start.y(), self.last_mouse_pos.y()) + self.image_offset.y(),
-                    abs(self.last_mouse_pos.x() - self.current_box_start.x()),
-                    abs(self.last_mouse_pos.y() - self.current_box_start.y())
-                )
-                pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
-                painter.setPen(pen)
-                painter.drawRect(temp_rect)
+            selection_rect = QRectF(
+                rect_x1,
+                rect_y1,
+                rect_x2 - rect_x1,
+                rect_y2 - rect_y1
+            )
+            # Рисуем полупрозрачный прямоугольник выбора
+            painter.setPen(QPen(QColor(100, 150, 255), 2, Qt.PenStyle.DashLine))
+            painter.setBrush(QBrush(QColor(100, 150, 255, 50)))  # Полупрозрачная заливка
+            painter.drawRect(selection_rect)
+        
+        # Рисуем текущий бокс при создании (вне цикла, чтобы работало даже когда нет существующих боксов)
+        if self.drawing_box and self.current_box_start:
+            temp_rect = QRectF(
+                min(self.current_box_start.x(), self.last_mouse_pos.x()) + self.image_offset.x(),
+                min(self.current_box_start.y(), self.last_mouse_pos.y()) + self.image_offset.y(),
+                abs(self.last_mouse_pos.x() - self.current_box_start.x()),
+                abs(self.last_mouse_pos.y() - self.current_box_start.y())
+            )
+            pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(temp_rect)
     
     def mousePressEvent(self, event):
         """Обработка нажатия мыши."""
@@ -1661,11 +2586,21 @@ class ImageDisplayWidget(QWidget):
             
             pixmap_rect = self.display_pixmap.rect()
             if not (0 <= pos.x() < pixmap_rect.width() and 0 <= pos.y() < pixmap_rect.height()):
+                # Если клик вне изображения, но изображение увеличено, разрешаем панорамирование
+                if self.is_image_upscaled():
+                    self.panning = True
+                    self.pan_start_pos = widget_pos
+                    self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
                 return
             
-            if self.rotation_mode and self.selected_box_index is not None:
+            # Проверяем, есть ли выбранные bboxes для поворота
+            target_index = self.selected_box_index
+            if target_index is None and hasattr(self, 'selected_box_indices') and self.selected_box_indices:
+                target_index = next(iter(self.selected_box_indices))
+            
+            if self.rotation_mode and target_index is not None:
                 # Режим поворота
-                box = self.bounding_boxes[self.selected_box_index]
+                box = self.bounding_boxes[target_index]
                 x1, y1, x2, y2, angle, _, _ = box
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
@@ -1689,34 +2624,109 @@ class ImageDisplayWidget(QWidget):
                         break
                 
                 if clicked_box is not None:
-                    self.selected_box_index = clicked_box
-                    # Обновляем флаг выбранности
+                    # Проверяем, нажаты ли Ctrl или Shift для множественного выбора
+                    ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    shift_pressed = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    
+                    if shift_pressed:
+                        # Range selection: выбираем все bboxes от последнего выбранного до текущего
+                        if self.selected_box_indices:
+                            # Находим последний выбранный индекс (или используем selected_box_index)
+                            last_selected = self.selected_box_index if self.selected_box_index is not None else next(iter(self.selected_box_indices))
+                            # Выбираем диапазон от last_selected до clicked_box
+                            start_idx = min(last_selected, clicked_box)
+                            end_idx = max(last_selected, clicked_box)
+                            # Добавляем все индексы в диапазоне к выбору
+                            for idx in range(start_idx, end_idx + 1):
+                                if idx < len(self.bounding_boxes):
+                                    self.selected_box_indices.add(idx)
+                            self.selected_box_index = clicked_box
+                        else:
+                            # Если нет предыдущего выбора, просто выбираем текущий
+                            self.selected_box_indices = {clicked_box}
+                            self.selected_box_index = clicked_box
+                    elif ctrl_pressed:
+                        # Множественный выбор: добавляем/удаляем из выбора
+                        if clicked_box in self.selected_box_indices:
+                            # Удаляем из выбора
+                            self.selected_box_indices.remove(clicked_box)
+                            if self.selected_box_index == clicked_box:
+                                # Если это был последний выбранный, обновляем его
+                                self.selected_box_index = next(iter(self.selected_box_indices)) if self.selected_box_indices else None
+                        else:
+                            # Добавляем к выбору
+                            self.selected_box_indices.add(clicked_box)
+                            self.selected_box_index = clicked_box
+                    else:
+                        # Одиночный выбор: очищаем предыдущий выбор
+                        self.selected_box_indices = {clicked_box}
+                        self.selected_box_index = clicked_box
+                    
+                    # Обновляем флаг выбранности для всех bboxes
                     for i, box in enumerate(self.bounding_boxes):
                         x1, y1, x2, y2, angle, _, name = box
-                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i == clicked_box, name)
+                        self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.selected_box_indices, name)
                     
                     # Обновляем список bboxes в окне разметки
                     if hasattr(self, 'marking_window') and self.marking_window:
                         self.marking_window.update_bbox_list()
                     
-                    # Начинаем перетаскивание
-                    self.dragging_box = True
-                    self.drag_type = interaction_type
-                    self.drag_corner_index = interaction_index
-                    self.drag_start_pos = pos
-                    self.drag_start_box = self.bounding_boxes[clicked_box]
+                    # Обновляем выделение в списке компонентов
+                    if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                        self.main_window_ref.update_component_list()
+                    
+                    # Начинаем перетаскивание только если не Ctrl+Click и не Shift+Click
+                    if not ctrl_pressed and not shift_pressed:
+                        self.dragging_box = True
+                        self.drag_type = interaction_type
+                        self.drag_corner_index = interaction_index
+                        self.drag_start_pos = pos
+                        self.drag_start_box = self.bounding_boxes[clicked_box]
                     self.update()
                 else:
-                    # Начинаем создание нового бокса
+                    # Проверяем, нажат ли Shift для прямоугольного выбора
+                    shift_pressed = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    
+                    if shift_pressed:
+                        # Начинаем рисование прямоугольника выбора
+                        self.selection_rect_start = pos
+                        self.selection_rect_end = pos
+                        self.drawing_selection_rect = True
+                        self.dragging_box = False
+                        self.update()
+                        return
+                    
+                    # Начинаем создание нового бокса (обычное поведение)
+                    # Проверяем, нажат ли Ctrl - если да, не снимаем выделение
+                    ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    if not ctrl_pressed:
+                        # Снимаем выделение только если не нажат Ctrl
+                        self.selected_box_index = None
+                        self.selected_box_indices = set()
+                        # Обновляем флаг выбранности для всех bboxes
+                        for i, box in enumerate(self.bounding_boxes):
+                            x1, y1, x2, y2, angle, _, name = box
+                            self.bounding_boxes[i] = (x1, y1, x2, y2, angle, False, name)
+                        # Обновляем выделение в списке компонентов (снимаем выделение)
+                        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                            self.main_window_ref.update_component_list()
+                    
                     self.current_box_start = pos
+                    self.last_mouse_pos = pos  # Initialize last_mouse_pos to current position
                     self.drawing_box = True
-                    self.selected_box_index = None
                     self.dragging_box = False
+                    self.update()  # Update to show the initial box (even if zero size)
         
         elif event.button() == Qt.MouseButton.RightButton:
-            # Правый клик - режим поворота
+            # Правый клик - режим поворота (если есть выбранный бокс) или панорамирование
             if self.selected_box_index is not None:
                 self.rotation_mode = True
+            else:
+                # Если нет выбранного бокса, используем правый клик для панорамирования
+                if not self.dragging_box and not self.drawing_box:
+                    self.panning = True
+                    self.pan_start_pos = event.position().toPoint()
+                    self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Средняя кнопка мыши - начало панорамирования
             if not self.dragging_box and not self.drawing_box:
@@ -1769,6 +2779,33 @@ class ImageDisplayWidget(QWidget):
             
             if not cursor_set:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            
+            # Проверяем, над каким bbox находится курсор (для подсветки при наведении)
+            hovered_box = None
+            if not self.dragging_box and not self.drawing_box and not self.drawing_selection_rect:
+                # Проверяем bboxes в обратном порядке (сначала верхние)
+                for i in range(len(self.bounding_boxes) - 1, -1, -1):
+                    box = self.bounding_boxes[i]
+                    interaction_type, _ = self.detect_box_interaction(pos, box)
+                    if interaction_type is not None:
+                        hovered_box = i
+                        break
+            
+            # Обновляем индекс наведенного bbox
+            if hovered_box != self.hovered_box_index:
+                self.hovered_box_index = hovered_box
+                self.update()  # Обновляем отображение для подсветки
+                # Обновляем список компонентов для подсветки имени
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.update_component_list()
+        else:
+            # Если мы не в режиме проверки курсора, сбрасываем hover
+            if self.hovered_box_index is not None:
+                self.hovered_box_index = None
+                self.update()
+                # Обновляем список компонентов для снятия подсветки имени
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.update_component_list()
         
         if self.rotation_mode and self.selected_box_index is not None:
             # Поворот выбранного бокса
@@ -1887,8 +2924,28 @@ class ImageDisplayWidget(QWidget):
                 self.bounding_boxes[self.selected_box_index] = (new_x1, new_y1, new_x2, new_y2, angle, True, name)
             
             self.update()
+        elif self.drawing_selection_rect:
+            # Обновляем конечную точку прямоугольника выбора
+            current_pos = event.position().toPoint()
+            pos = current_pos - self.image_offset
+            self.selection_rect_end = pos
+            self.update()
         elif self.drawing_box:
             self.update()
+        elif self.double_click_panning:
+            # Панорамирование после двойного клика
+            current_pos = event.position().toPoint()
+            dx = current_pos.x() - self.pan_start_pos.x()
+            dy = current_pos.y() - self.pan_start_pos.y()
+            self.pan_offset.setX(self.pan_offset.x() + dx)
+            self.pan_offset.setY(self.pan_offset.y() + dy)
+            # Ограничиваем pan_offset, чтобы изображение не выходило за границы
+            self.constrain_pan_offset()
+            self.pan_start_pos = current_pos
+            self.update()
+            # Обновляем scrollbars
+            if hasattr(self, 'marking_window') and self.marking_window:
+                self.marking_window.update_scrollbars()
         elif self.panning:
             # Панорамирование изображения
             current_pos = event.position().toPoint()
@@ -1896,21 +2953,113 @@ class ImageDisplayWidget(QWidget):
             dy = current_pos.y() - self.pan_start_pos.y()
             self.pan_offset.setX(self.pan_offset.x() + dx)
             self.pan_offset.setY(self.pan_offset.y() + dy)
+            # Ограничиваем pan_offset, чтобы изображение не выходило за границы
+            self.constrain_pan_offset()
             self.pan_start_pos = current_pos
             self.update()
             # Обновляем scrollbars
             if hasattr(self, 'marking_window') and self.marking_window:
                 self.marking_window.update_scrollbars()
     
+    def mouseDoubleClickEvent(self, event):
+        """Обработка двойного клика мыши для начала панорамирования."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Если изображение увеличено, начинаем панорамирование после двойного клика
+            if self.is_image_upscaled():
+                self.double_click_panning = True
+                self.pan_start_pos = event.position().toPoint()
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+    
     def mouseReleaseEvent(self, event):
         """Обработка отпускания мыши."""
         if event.button() == Qt.MouseButton.LeftButton:
+            # Завершаем панорамирование после двойного клика
+            if self.double_click_panning:
+                self.double_click_panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+                # Обновляем scrollbars
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_scrollbars()
+            
+            # Завершаем обычное панорамирование, если оно было начато
+            if self.panning and not self.drawing_box and not self.dragging_box and not self.drawing_selection_rect:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+                # Обновляем scrollbars
+                if hasattr(self, 'marking_window') and self.marking_window:
+                    self.marking_window.update_scrollbars()
+            
+            # Завершаем рисование прямоугольника выбора
+            if self.drawing_selection_rect:
+                if self.selection_rect_start and self.selection_rect_end:
+                    # Вычисляем прямоугольник выбора
+                    rect_x1 = min(self.selection_rect_start.x(), self.selection_rect_end.x())
+                    rect_y1 = min(self.selection_rect_start.y(), self.selection_rect_end.y())
+                    rect_x2 = max(self.selection_rect_start.x(), self.selection_rect_end.x())
+                    rect_y2 = max(self.selection_rect_start.y(), self.selection_rect_end.y())
+                    
+                    # Проверяем, какие bboxes пересекаются с прямоугольником выбора
+                    selected_indices = set()
+                    for i, box in enumerate(self.bounding_boxes):
+                        x1, y1, x2, y2, angle, _, name = box
+                        # Преобразуем координаты bbox с учетом смещения изображения
+                        box_x1 = int(x1) + self.image_offset.x()
+                        box_y1 = int(y1) + self.image_offset.y()
+                        box_x2 = int(x2) + self.image_offset.x()
+                        box_y2 = int(y2) + self.image_offset.y()
+                        
+                        # Проверяем пересечение прямоугольников
+                        if not (rect_x2 < box_x1 or rect_x1 > box_x2 or rect_y2 < box_y1 or rect_y1 > box_y2):
+                            selected_indices.add(i)
+                    
+                    # Добавляем найденные bboxes к выбору
+                    if selected_indices:
+                        # Если Ctrl не нажат, очищаем предыдущий выбор
+                        ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                        if not ctrl_pressed:
+                            self.selected_box_indices = selected_indices.copy()
+                        else:
+                            # Добавляем к существующему выбору
+                            self.selected_box_indices.update(selected_indices)
+                        
+                        if selected_indices:
+                            self.selected_box_index = next(iter(selected_indices))
+                        
+                        # Обновляем флаг выбранности для всех bboxes
+                        for i, box in enumerate(self.bounding_boxes):
+                            x1, y1, x2, y2, angle, _, name = box
+                            self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.selected_box_indices, name)
+                        
+                        # Обновляем список компонентов
+                        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                            self.main_window_ref.update_component_list()
+                
+                # Очищаем прямоугольник выбора
+                self.selection_rect_start = None
+                self.selection_rect_end = None
+                self.drawing_selection_rect = False
+                self.update()
+            
             if self.drawing_box and self.current_box_start:
                 # Завершаем создание бокса
                 widget_pos = event.position().toPoint()
                 end_pos = widget_pos - self.image_offset
-                x1, y1 = self.current_box_start.x(), self.current_box_start.y()
-                x2, y2 = end_pos.x(), end_pos.y()
+                start_x, start_y = self.current_box_start.x(), self.current_box_start.y()
+                end_x, end_y = end_pos.x(), end_pos.y()
+                
+                # Нормализуем координаты, чтобы x1 < x2 и y1 < y2 (обе точки - противоположные углы)
+                # Это гарантирует правильные координаты внутренней области независимо от направления рисования
+                x1 = min(start_x, end_x)
+                y1 = min(start_y, end_y)
+                x2 = max(start_x, end_x)
+                y2 = max(start_y, end_y)
+                
+                # Убеждаемся, что координаты действительно нормализованы (x1 < x2, y1 < y2)
+                # Это важно для правильного расчета внутренней области
+                if x1 >= x2:
+                    x1, x2 = x2, x1
+                if y1 >= y2:
+                    y1, y2 = y2, y1
                 
                 # Проверяем, что бокс имеет ненулевой размер
                 if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
@@ -1926,6 +3075,10 @@ class ImageDisplayWidget(QWidget):
                     if hasattr(self, 'marking_window') and self.marking_window:
                         self.marking_window.update_bbox_list()
                     
+                    # Auto-save if used in preview (has main_window_ref)
+                    if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                        self.main_window_ref.save_current_etalon_bboxes()
+                    
                     # Автоматически показываем диалог для ввода имени нового бокса
                     self._show_name_dialog_for_selected_box()
                 
@@ -1940,17 +3093,37 @@ class ImageDisplayWidget(QWidget):
                 self.drag_corner_index = None
                 self.drag_start_pos = None
                 self.drag_start_box = None
+                # Auto-save after dragging/resizing bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
             
-            self.rotation_mode = False
+            # Завершаем поворот
+            if self.rotation_mode:
+                self.rotation_mode = False
+                # Auto-save after rotating bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
         
         elif event.button() == Qt.MouseButton.RightButton:
-            self.rotation_mode = False
+            # Завершаем поворот
+            if self.rotation_mode:
+                self.rotation_mode = False
+                # Auto-save after rotating bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
+            # Завершение панорамирования (если панорамирование было начато правым кликом)
+            if self.panning:
+                self.panning = False
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             if self.dragging_box:
                 self.dragging_box = False
                 self.drag_type = None
                 self.drag_corner_index = None
                 self.drag_start_pos = None
                 self.drag_start_box = None
+                # Auto-save after dragging/resizing bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
         
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Завершение панорамирования
@@ -1985,25 +3158,192 @@ class ImageDisplayWidget(QWidget):
                 # Обновляем список bboxes в окне разметки
                 if hasattr(self, 'marking_window') and self.marking_window:
                     self.marking_window.update_bbox_list()
+                # Auto-save if used in preview (has main_window_ref)
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
+    
+    def _confirm_delete_bbox(self):
+        """Показать диалог подтверждения удаления бокса."""
+        # Получаем выбранные bboxes
+        selected_indices = self.selected_box_indices if hasattr(self, 'selected_box_indices') and self.selected_box_indices else set()
+        if not selected_indices and self.selected_box_index is not None:
+            selected_indices = {self.selected_box_index}
+        
+        if not selected_indices:
+            return False
+        
+        # Формируем текст сообщения в зависимости от количества выбранных
+        if len(selected_indices) == 1:
+            box = self.bounding_boxes[next(iter(selected_indices))]
+            x1, y1, x2, y2, angle, selected, name = box
+            component_name = name if name and name.strip() else "неназванный компонент"
+            message_text = f"Вы уверены, что хотите удалить компонент '{component_name}'?"
+        else:
+            message_text = f"Вы уверены, что хотите удалить {len(selected_indices)} выбранных компонентов?"
+        
+        # Получаем главное окно для доступа к настройке
+        main_window = None
+        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+            main_window = self.main_window_ref
+        else:
+            parent = self.parent()
+            while parent and not isinstance(parent, QMainWindow):
+                parent = parent.parent()
+            if isinstance(parent, QMainWindow):
+                main_window = parent
+        
+        # Проверяем, нужно ли показывать подтверждение
+        if main_window and hasattr(main_window, 'skip_delete_confirmation') and main_window.skip_delete_confirmation:
+            # Пропускаем диалог, сразу подтверждаем удаление
+            return True
+        
+        # Получаем родительское окно для показа диалога
+        parent = self.parent()
+        while parent and not isinstance(parent, QMainWindow):
+            parent = parent.parent()
+        
+        if not parent:
+            # Если не нашли главное окно, используем self
+            parent = self
+        
+        # Показываем диалог подтверждения
+        msg_box = QMessageBox(parent)
+        msg_box.setIcon(QMessageBox.Icon.Question)
+        msg_box.setWindowTitle("Удаление компонента")
+        msg_box.setText(message_text)
+        
+        # Добавляем чекбокс "Больше не спрашивать"
+        checkbox = QCheckBox("Больше не спрашивать")
+        msg_box.setCheckBox(checkbox)
+        
+        btn_yes = msg_box.addButton("Да", QMessageBox.ButtonRole.AcceptRole)
+        btn_no = msg_box.addButton("Нет", QMessageBox.ButtonRole.RejectRole)
+        msg_box.setDefaultButton(btn_no)
+        msg_box.exec()
+        
+        # Сохраняем настройку, если чекбокс отмечен
+        if checkbox.isChecked() and main_window:
+            main_window.skip_delete_confirmation = True
+        
+        return msg_box.clickedButton() == btn_yes
     
     def keyPressEvent(self, event):
         """Обработка нажатия клавиш."""
+        ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        
+        if ctrl_pressed and event.key() == Qt.Key.Key_C:
+            # Ctrl+C - копирование выбранных bboxes
+            selected_indices = self.selected_box_indices if hasattr(self, 'selected_box_indices') and self.selected_box_indices else set()
+            if not selected_indices and self.selected_box_index is not None:
+                selected_indices = {self.selected_box_index}
+            
+            if selected_indices and hasattr(self, 'main_window_ref') and self.main_window_ref:
+                # Копируем выбранные bboxes в буфер обмена
+                self.main_window_ref.bbox_clipboard = []
+                for idx in selected_indices:
+                    if idx < len(self.bounding_boxes):
+                        box = self.bounding_boxes[idx]
+                        x1, y1, x2, y2, angle, _, name = box
+                        # Сохраняем данные bbox (x1, y1, x2, y2, angle, name)
+                        self.main_window_ref.bbox_clipboard.append({
+                            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                            'angle': angle, 'name': name
+                        })
+                # Сбрасываем счетчик вставок при копировании
+                self.main_window_ref.bbox_paste_count = 0
+                return
+        elif ctrl_pressed and event.key() == Qt.Key.Key_V:
+            # Ctrl+V - вставка bboxes из буфера обмена
+            if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                if self.main_window_ref.bbox_clipboard:
+                    # Инициализируем счетчик вставок, если его еще нет
+                    if not hasattr(self.main_window_ref, 'bbox_paste_count'):
+                        self.main_window_ref.bbox_paste_count = 0
+                    
+                    # Увеличиваем счетчик вставок для прогрессивного смещения
+                    self.main_window_ref.bbox_paste_count += 1
+                    
+                    # Вычисляем смещение для вставки (чтобы не накладывались на оригиналы)
+                    # Каждая последующая вставка смещается дальше от предыдущей
+                    base_offset = 20
+                    offset_x = base_offset * self.main_window_ref.bbox_paste_count
+                    offset_y = base_offset * self.main_window_ref.bbox_paste_count
+                    
+                    # Добавляем скопированные bboxes с прогрессивным смещением
+                    new_indices = []
+                    for bbox_data in self.main_window_ref.bbox_clipboard:
+                        new_x1 = bbox_data['x1'] + offset_x
+                        new_y1 = bbox_data['y1'] + offset_y
+                        new_x2 = bbox_data['x2'] + offset_x
+                        new_y2 = bbox_data['y2'] + offset_y
+                        new_angle = bbox_data['angle']
+                        new_name = bbox_data['name']
+                        
+                        # Добавляем новый bbox
+                        self.bounding_boxes.append((new_x1, new_y1, new_x2, new_y2, new_angle, True, new_name))
+                        new_indices.append(len(self.bounding_boxes) - 1)
+                    
+                    # Обновляем выделение на вставленные bboxes
+                    if new_indices:
+                        self.selected_box_indices = set(new_indices)
+                        self.selected_box_index = new_indices[0]
+                        
+                        # Снимаем выделение с других bboxes
+                        for i, box in enumerate(self.bounding_boxes):
+                            x1, y1, x2, y2, angle, _, name = box
+                            self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.selected_box_indices, name)
+                        
+                        # Обновляем отображение
+                        self.update()
+                        
+                        # Обновляем список компонентов
+                        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                            self.main_window_ref.update_component_list()
+                            # Auto-save
+                            self.main_window_ref.save_current_etalon_bboxes()
+                return
+        
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             # Если нажат Enter и есть выбранный бокс, открываем диалог для ввода имени
-            if self.selected_box_index is not None:
+            # Используем последний выбранный или первый из множественного выбора
+            target_index = self.selected_box_index
+            if target_index is None and hasattr(self, 'selected_box_indices') and self.selected_box_indices:
+                target_index = next(iter(self.selected_box_indices))
+            
+            if target_index is not None:
                 self._show_name_dialog_for_selected_box()
         elif event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
-            # Если нажат Delete/Backspace и есть выбранный бокс, удаляем его
-            if self.selected_box_index is not None and self.selected_box_index < len(self.bounding_boxes):
-                # Удаляем выбранный бокс
-                del self.bounding_boxes[self.selected_box_index]
+            # Если нажат Delete/Backspace и есть выбранные боксы, показываем подтверждение и удаляем их
+            # Получаем выбранные индексы
+            selected_indices = self.selected_box_indices if hasattr(self, 'selected_box_indices') and self.selected_box_indices else set()
+            if not selected_indices and self.selected_box_index is not None:
+                selected_indices = {self.selected_box_index}
+            
+            if selected_indices:
+                # Показываем диалог подтверждения
+                if not self._confirm_delete_bbox():
+                    return
+                
+                # Удаляем выбранные боксы в обратном порядке, чтобы индексы не сдвигались
+                for index in sorted(selected_indices, reverse=True):
+                    if index < len(self.bounding_boxes):
+                        del self.bounding_boxes[index]
+                
                 # Сбрасываем выделение
                 self.selected_box_index = None
+                if hasattr(self, 'selected_box_indices'):
+                    self.selected_box_indices = set()
+                
                 # Обновляем отображение
                 self.update()
                 # Обновляем список bboxes в окне разметки
                 if hasattr(self, 'marking_window') and self.marking_window:
                     self.marking_window.update_bbox_list()
+                # Auto-save if used in preview (has main_window_ref)
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
+                    # Обновляем выделение в списке компонентов
+                    self.main_window_ref.update_component_list()
         elif event.key() == Qt.Key.Key_Left:
             # Стрелка влево - панорамирование влево
             self.pan_offset.setX(self.pan_offset.x() + 20)
@@ -2042,7 +3382,7 @@ class ImageDisplayWidget(QWidget):
             super().keyPressEvent(event)
     
     def wheelEvent(self, event):
-        """Обработка прокрутки колесика мыши для масштабирования с Ctrl."""
+        """Обработка прокрутки колесика мыши для масштабирования с Ctrl или панорамирования без Ctrl."""
         # Проверяем, нажат ли Ctrl
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             # Получаем направление прокрутки
@@ -2058,8 +3398,37 @@ class ImageDisplayWidget(QWidget):
                     self.marking_window.zoom_out()
                 event.accept()
                 return
+            # Если используется в preview (has main_window_ref), вызываем методы масштабирования
+            elif hasattr(self, 'main_window_ref') and self.main_window_ref:
+                if delta > 0:
+                    # Прокрутка вверх - увеличение
+                    self.main_window_ref.etalon_zoom_in()
+                elif delta < 0:
+                    # Прокрутка вниз - уменьшение
+                    self.main_window_ref.etalon_zoom_out()
+                event.accept()
+                return
+        else:
+            # Если Ctrl не нажат, используем прокрутку для панорамирования
+            # Получаем направление прокрутки
+            delta_x = event.angleDelta().x()
+            delta_y = event.angleDelta().y()
+            
+            # Если есть горизонтальная прокрутка (trackpad), используем её
+            if delta_x != 0:
+                self.pan_offset.setX(self.pan_offset.x() - delta_x // 10)
+                self.update()
+                event.accept()
+                return
+            
+            # Вертикальная прокрутка - панорамирование вверх/вниз
+            if delta_y != 0:
+                self.pan_offset.setY(self.pan_offset.y() - delta_y // 10)
+                self.update()
+                event.accept()
+                return
         
-        # Если Ctrl не нажат, передаем событие дальше
+        # Если ничего не обработано, передаем событие дальше
         super().wheelEvent(event)
     
     def keyReleaseEvent(self, event):
@@ -2224,6 +3593,8 @@ class ImageMarkingWindow(QWidget):
             h_scrollbar.setValue(int(scroll_value))
             h_scrollbar.setVisible(True)
         else:
+            # Если изображение меньше viewport, сбрасываем горизонтальный pan_offset
+            self.image_widget.pan_offset.setX(0)
             h_scrollbar.setMaximum(0)
             h_scrollbar.setVisible(False)
         
@@ -2240,6 +3611,8 @@ class ImageMarkingWindow(QWidget):
             v_scrollbar.setValue(int(scroll_value))
             v_scrollbar.setVisible(True)
         else:
+            # Если изображение меньше viewport, сбрасываем вертикальный pan_offset
+            self.image_widget.pan_offset.setY(0)
             v_scrollbar.setMaximum(0)
             v_scrollbar.setVisible(False)
         
@@ -2298,12 +3671,22 @@ class ImageMarkingWindow(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
             
+            # Проверяем, если изображение стало меньше виджета, сбрасываем pan_offset сразу
+            # (чтобы избежать пустых полей при уменьшении)
+            if hasattr(self, 'scroll_area') and hasattr(self.scroll_area, 'viewport'):
+                viewport_size = self.scroll_area.viewport().size()
+                if scaled_width <= viewport_size.width() and scaled_height <= viewport_size.height():
+                    self.image_widget.pan_offset = QPoint(0, 0)
+            
             # Устанавливаем изображение в виджет
             self.image_widget.set_image(scaled_pixmap)
             
-            # Обновляем scrollbars после установки изображения
+            # Обновляем scrollbars после установки изображения (сбросит pan_offset если нужно)
             # Используем QTimer для отложенного обновления после того, как виджет обновится
-            QTimer.singleShot(10, self.update_scrollbars)
+            def update_scrollbars_and_image():
+                self.update_scrollbars()
+                self.image_widget.update()
+            QTimer.singleShot(10, update_scrollbars_and_image)
             
         except Exception as e:
             error_label = QLabel(f"Ошибка при отображении изображения: {str(e)}")
