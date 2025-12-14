@@ -108,6 +108,9 @@ class MainWindowControllerV2(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindowV2()
         self.ui.setupUi(self)
+        
+        # Enable fullscreen button by removing maximum size constraint
+        self.setMaximumSize(16777215, 16777215)  # QWIDGETSIZE_MAX equivalent
 
         # === Replace scroll area contents with QListWidget ===
         # For take image points
