@@ -2219,6 +2219,10 @@ class MainWindowControllerV2(QMainWindow):
         QMessageBox.critical(self, "Ошибка", message)
 
     def closeEvent(self, event):
+        # Save all bboxes before closing to avoid losing changes
+        if hasattr(self, 'etalon_image_widget') and self.etalon_image_widget:
+            self.save_current_etalon_bboxes()
+        
         if self.cam:
             self.cam.stop()
         if self.driver:
@@ -3058,11 +3062,24 @@ class ImageDisplayWidget(QWidget):
                 self.drag_corner_index = None
                 self.drag_start_pos = None
                 self.drag_start_box = None
+                # Auto-save after dragging/resizing bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
             
-            self.rotation_mode = False
+            # Завершаем поворот
+            if self.rotation_mode:
+                self.rotation_mode = False
+                # Auto-save after rotating bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
         
         elif event.button() == Qt.MouseButton.RightButton:
-            self.rotation_mode = False
+            # Завершаем поворот
+            if self.rotation_mode:
+                self.rotation_mode = False
+                # Auto-save after rotating bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
             # Завершение панорамирования (если панорамирование было начато правым кликом)
             if self.panning:
                 self.panning = False
@@ -3073,6 +3090,9 @@ class ImageDisplayWidget(QWidget):
                 self.drag_corner_index = None
                 self.drag_start_pos = None
                 self.drag_start_box = None
+                # Auto-save after dragging/resizing bbox
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.save_current_etalon_bboxes()
         
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Завершение панорамирования
