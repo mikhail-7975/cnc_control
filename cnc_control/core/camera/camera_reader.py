@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 import json
+import platform
 
 # -----------------------------
 # FisheyeUndistorter (unchanged)
@@ -77,16 +78,32 @@ class ThreadSafeCameraReader:
         if calibration_file is not None:
             self.undistorter = FisheyeUndistorter(calibration_file)
 
-        # Try to use DirectShow backend on Windows (more stable than MSMF)
+        # Detect OS and select appropriate backend
         if backend is None:
-            try:
-                # Try DirectShow first (more stable on Windows)
-                self.cap = cv2.VideoCapture(camera_id)
-                if not self.cap.isOpened():
-                    # Fallback to MSMF
-                    self.cap = cv2.VideoCapture(camera_id, cv2.CAP_MSMF)
-            except (AttributeError, ValueError):
-                # Fallback to default backend if constants are not available
+            os_name = platform.system().lower()
+            
+            if os_name == 'linux':
+                # Try V4L2 backend on Linux
+                try:
+                    self.cap = cv2.VideoCapture(camera_id, cv2.CAP_V4L2)
+                    if not self.cap.isOpened():
+                        # Fallback to no backend specification
+                        self.cap = cv2.VideoCapture(camera_id)
+                except (AttributeError, ValueError):
+                    # Fallback to default backend if V4L2 constant is not available
+                    self.cap = cv2.VideoCapture(camera_id)
+            elif os_name == 'windows':
+                # Try DirectShow backend on Windows
+                try:
+                    self.cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+                    if not self.cap.isOpened():
+                        # Fallback to no backend specification
+                        self.cap = cv2.VideoCapture(camera_id)
+                except (AttributeError, ValueError):
+                    # Fallback to default backend if DShow constant is not available
+                    self.cap = cv2.VideoCapture(camera_id)
+            else:
+                # For other OS (macOS, etc.), don't specify backend
                 self.cap = cv2.VideoCapture(camera_id)
         else:
             self.cap = cv2.VideoCapture(camera_id, backend)
