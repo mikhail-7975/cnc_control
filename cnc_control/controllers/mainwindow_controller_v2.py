@@ -899,6 +899,10 @@ class MainWindowControllerV2(QMainWindow):
             green = QColor(200, 255, 200)  # Light green color
             green_brush = QBrush(green)
             
+            # Желтый цвет для наведенного компонента
+            yellow = QColor(255, 255, 200)  # Light yellow color
+            yellow_brush = QBrush(yellow)
+            
             # Получаем информацию о выбранных bboxes (если есть)
             selected_image_name = None
             selected_bbox_indices = set()
@@ -911,6 +915,14 @@ class MainWindowControllerV2(QMainWindow):
                     if self.etalon_image_widget.selected_box_index < len(self.etalon_image_widget.bounding_boxes):
                         selected_image_name = self.get_current_etalon_image_name()
                         selected_bbox_indices = {self.etalon_image_widget.selected_box_index}
+            
+            # Получаем информацию о наведенном bbox (если есть)
+            hovered_image_name = None
+            hovered_bbox_index = None
+            if hasattr(self, 'etalon_image_widget'):
+                if hasattr(self.etalon_image_widget, 'hovered_box_index') and self.etalon_image_widget.hovered_box_index is not None:
+                    hovered_image_name = self.get_current_etalon_image_name()
+                    hovered_bbox_index = self.etalon_image_widget.hovered_box_index
             
             # Фильтруем только изображения из загруженных
             for image_name in sorted(all_bboxes_data.keys()):
@@ -930,18 +942,22 @@ class MainWindowControllerV2(QMainWindow):
                 for bbox_index, bbox_data in enumerate(bboxes_data):
                     component_name = bbox_data.get('name', '').strip()
                     
-                    # Проверяем, является ли этот компонент выбранным
+                    # Проверяем, является ли этот компонент выбранным или наведенным
                     is_selected = (image_name == selected_image_name and 
                                   bbox_index in selected_bbox_indices)
+                    is_hovered = (image_name == hovered_image_name and 
+                                 bbox_index == hovered_bbox_index)
                     
                     if component_name:
                         # Компонент с именем
                         has_components = True
                         component_item = QStandardItem(component_name)
                         component_item.setEditable(False)
-                        # Применяем зеленый фон, если выбран
+                        # Применяем фон: зеленый если выбран, желтый если наведен
                         if is_selected:
                             component_item.setBackground(green_brush)
+                        elif is_hovered:
+                            component_item.setBackground(yellow_brush)
                         # Добавляем как дочерний элемент
                         image_item.appendRow(component_item)
                     else:
@@ -950,9 +966,11 @@ class MainWindowControllerV2(QMainWindow):
                         unnamed_name = f"Unnamed{unnamed_counter}"
                         component_item = QStandardItem(unnamed_name)
                         component_item.setEditable(False)
-                        # Применяем фон: зеленый если выбран, иначе светло-красный
+                        # Применяем фон: зеленый если выбран, желтый если наведен, иначе светло-красный
                         if is_selected:
                             component_item.setBackground(green_brush)
+                        elif is_hovered:
+                            component_item.setBackground(yellow_brush)
                         else:
                             component_item.setBackground(light_red_brush)
                         # Добавляем как дочерний элемент
@@ -2496,8 +2514,11 @@ class ImageDisplayWidget(QWidget):
                                  text_rect.width() + 4, text_rect.height() + 4)
                 painter.fillRect(bg_rect, QColor(0, 0, 0, 180))  # Полупрозрачный черный фон
                 
+                # Определяем цвет текста: желтый для наведения, белый для остальных
+                text_color = QColor(255, 255, 0) if is_hovered else QColor(255, 255, 255)
+                
                 # Рисуем текст
-                painter.setPen(QColor(255, 255, 255))
+                painter.setPen(text_color)
                 painter.drawText(text_x, text_y, name)
                 painter.restore()
         
@@ -2753,11 +2774,17 @@ class ImageDisplayWidget(QWidget):
             if hovered_box != self.hovered_box_index:
                 self.hovered_box_index = hovered_box
                 self.update()  # Обновляем отображение для подсветки
+                # Обновляем список компонентов для подсветки имени
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.update_component_list()
         else:
             # Если мы не в режиме проверки курсора, сбрасываем hover
             if self.hovered_box_index is not None:
                 self.hovered_box_index = None
                 self.update()
+                # Обновляем список компонентов для снятия подсветки имени
+                if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                    self.main_window_ref.update_component_list()
         
         if self.rotation_mode and self.selected_box_index is not None:
             # Поворот выбранного бокса
