@@ -80,6 +80,11 @@ class ThreadSafeCameraReader:
         if calibration_file is not None:
             self.undistorter = FisheyeUndistorter(calibration_file)
 
+        # Store preferred settings (can be changed via methods)
+        self.preferred_width = 8000
+        self.preferred_height = 6000
+        self.preferred_fps = 5
+
         self._latest_raw_frame = None
         self._frame_lock = threading.Lock()
         self._running = True
@@ -134,14 +139,10 @@ class ThreadSafeCameraReader:
         # Set codec
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         
-        # Set resolution and FPS
-        preferred_width = 8000
-        preferred_height = 6000
-        preferred_fps = 5
-        
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, preferred_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, preferred_height)
-        self.cap.set(cv2.CAP_PROP_FPS, preferred_fps)
+        # Set resolution and FPS using stored preferred values
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.preferred_width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.preferred_height)
+        self.cap.set(cv2.CAP_PROP_FPS, self.preferred_fps)
         
         # Allow camera to apply settings
         time.sleep(0.2)
@@ -160,10 +161,10 @@ class ThreadSafeCameraReader:
         actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
         
         print(f"📹 Camera opened: {self.width}x{self.height} @ {actual_fps:.1f} FPS")
-        if self.width != preferred_width or self.height != preferred_height:
-            print(f"⚠️  Requested {preferred_width}x{preferred_height}, got {self.width}x{self.height}")
-        if actual_fps != preferred_fps:
-            print(f"⚠️  Requested {preferred_fps} FPS, got {actual_fps:.1f} FPS")
+        if self.width != self.preferred_width or self.height != self.preferred_height:
+            print(f"⚠️  Requested {self.preferred_width}x{self.preferred_height}, got {self.width}x{self.height}")
+        if actual_fps != self.preferred_fps:
+            print(f"⚠️  Requested {self.preferred_fps} FPS, got {actual_fps:.1f} FPS")
 
         # If undistorter is used, verify resolution matches
         if self.undistorter is not None:
@@ -192,6 +193,124 @@ class ThreadSafeCameraReader:
         except Exception as e:
             print(f"❌ Camera reset failed: {e}")
             # Try to continue with existing camera if reset fails
+    
+    def set_fps(self, fps):
+        """
+        Set the camera FPS.
+        
+        Args:
+            fps (float): Desired frames per second
+            
+        Returns:
+            bool: True if FPS was set successfully, False otherwise
+        """
+        if not hasattr(self, 'cap') or self.cap is None or not self.cap.isOpened():
+            print("❌ Camera is not opened")
+            return False
+        
+        if fps <= 0:
+            print(f"❌ Invalid FPS value: {fps}")
+            return False
+        
+        self.preferred_fps = fps
+        success = self.cap.set(cv2.CAP_PROP_FPS, fps)
+        
+        if success:
+            # Allow camera to apply settings
+            time.sleep(0.2)
+            actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            print(f"📹 FPS set to {actual_fps:.1f} (requested {fps:.1f})")
+            if abs(actual_fps - fps) > 0.1:
+                print(f"⚠️  Camera may not support exact FPS {fps:.1f}, using {actual_fps:.1f}")
+            return True
+        else:
+            print(f"❌ Failed to set FPS to {fps}")
+            return False
+    
+    def set_resolution(self, width, height):
+        """
+        Set the camera resolution.
+        
+        Args:
+            width (int): Desired frame width
+            height (int): Desired frame height
+            
+        Returns:
+            bool: True if resolution was set successfully, False otherwise
+        """
+        if not hasattr(self, 'cap') or self.cap is None or not self.cap.isOpened():
+            print("❌ Camera is not opened")
+            return False
+        
+        if width <= 0 or height <= 0:
+            print(f"❌ Invalid resolution: {width}x{height}")
+            return False
+        
+        # Check if undistorter resolution matches (if undistorter is used)
+        if self.undistorter is not None:
+            if (width, height) != self.undistorter.resolution:
+                print(f"⚠️  Warning: New resolution ({width}x{height}) does not match "
+                      f"calibration resolution {self.undistorter.resolution}")
+                print("   Undistortion may not work correctly with this resolution")
+        
+        self.preferred_width = width
+        self.preferred_height = height
+        
+        success_width = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        success_height = self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        
+        if success_width and success_height:
+            # Allow camera to apply settings
+            time.sleep(0.2)
+            
+            # Read a few frames to let camera adjust
+            for _ in range(3):
+                ret, _ = self.cap.read()
+                if not ret:
+                    break
+                time.sleep(0.1)
+            
+            # Get actual resolution from camera
+            actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            self.width = actual_width
+            self.height = actual_height
+            
+            print(f"📹 Resolution set to {actual_width}x{actual_height} (requested {width}x{height})")
+            if actual_width != width or actual_height != height:
+                print(f"⚠️  Camera may not support exact resolution {width}x{height}")
+            
+            return True
+        else:
+            print(f"❌ Failed to set resolution to {width}x{height}")
+            return False
+    
+    def get_fps(self):
+        """
+        Get the current camera FPS.
+        
+        Returns:
+            float: Current FPS, or None if camera is not opened
+        """
+        if not hasattr(self, 'cap') or self.cap is None or not self.cap.isOpened():
+            return None
+        return self.cap.get(cv2.CAP_PROP_FPS)
+    
+    def get_resolution(self):
+        """
+        Get the current camera resolution.
+        
+        Returns:
+            tuple: (width, height) or None if camera is not opened
+        """
+        if not hasattr(self, 'cap') or self.cap is None or not self.cap.isOpened():
+            return None
+        if hasattr(self, 'width') and hasattr(self, 'height'):
+            return (self.width, self.height)
+        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        return (width, height)
 
     def _capture_loop(self):
         """Capture raw frames in background."""
