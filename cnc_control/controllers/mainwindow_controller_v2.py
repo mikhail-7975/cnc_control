@@ -166,6 +166,9 @@ class MainWindowControllerV2(QMainWindow):
         # Preference: don't ask for delete confirmation
         self.skip_delete_confirmation = False
         
+        # Clipboard for bboxes copy/paste
+        self.bbox_clipboard = []  # List of bbox data: [x1, y1, x2, y2, angle, name]
+        
         # Etalon image display widget with markup support
         self.etalon_image_widget = ImageDisplayWidget(self.ui.display_etalon_image_widget)
         self.etalon_image_widget.resize(self.ui.display_etalon_image_widget.size())
@@ -3117,6 +3120,69 @@ class ImageDisplayWidget(QWidget):
     
     def keyPressEvent(self, event):
         """Обработка нажатия клавиш."""
+        ctrl_pressed = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        
+        if ctrl_pressed and event.key() == Qt.Key.Key_C:
+            # Ctrl+C - копирование выбранных bboxes
+            selected_indices = self.selected_box_indices if hasattr(self, 'selected_box_indices') and self.selected_box_indices else set()
+            if not selected_indices and self.selected_box_index is not None:
+                selected_indices = {self.selected_box_index}
+            
+            if selected_indices and hasattr(self, 'main_window_ref') and self.main_window_ref:
+                # Копируем выбранные bboxes в буфер обмена
+                self.main_window_ref.bbox_clipboard = []
+                for idx in selected_indices:
+                    if idx < len(self.bounding_boxes):
+                        box = self.bounding_boxes[idx]
+                        x1, y1, x2, y2, angle, _, name = box
+                        # Сохраняем данные bbox (x1, y1, x2, y2, angle, name)
+                        self.main_window_ref.bbox_clipboard.append({
+                            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                            'angle': angle, 'name': name
+                        })
+                return
+        elif ctrl_pressed and event.key() == Qt.Key.Key_V:
+            # Ctrl+V - вставка bboxes из буфера обмена
+            if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                if self.main_window_ref.bbox_clipboard:
+                    # Вычисляем смещение для вставки (чтобы не накладывались на оригиналы)
+                    offset_x = 20
+                    offset_y = 20
+                    
+                    # Добавляем скопированные bboxes с небольшим смещением
+                    new_indices = []
+                    for bbox_data in self.main_window_ref.bbox_clipboard:
+                        new_x1 = bbox_data['x1'] + offset_x
+                        new_y1 = bbox_data['y1'] + offset_y
+                        new_x2 = bbox_data['x2'] + offset_x
+                        new_y2 = bbox_data['y2'] + offset_y
+                        new_angle = bbox_data['angle']
+                        new_name = bbox_data['name']
+                        
+                        # Добавляем новый bbox
+                        self.bounding_boxes.append((new_x1, new_y1, new_x2, new_y2, new_angle, True, new_name))
+                        new_indices.append(len(self.bounding_boxes) - 1)
+                    
+                    # Обновляем выделение на вставленные bboxes
+                    if new_indices:
+                        self.selected_box_indices = set(new_indices)
+                        self.selected_box_index = new_indices[0]
+                        
+                        # Снимаем выделение с других bboxes
+                        for i, box in enumerate(self.bounding_boxes):
+                            x1, y1, x2, y2, angle, _, name = box
+                            self.bounding_boxes[i] = (x1, y1, x2, y2, angle, i in self.selected_box_indices, name)
+                        
+                        # Обновляем отображение
+                        self.update()
+                        
+                        # Обновляем список компонентов
+                        if hasattr(self, 'main_window_ref') and self.main_window_ref:
+                            self.main_window_ref.update_component_list()
+                            # Auto-save
+                            self.main_window_ref.save_current_etalon_bboxes()
+                return
+        
         if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
             # Если нажат Enter и есть выбранный бокс, открываем диалог для ввода имени
             # Используем последний выбранный или первый из множественного выбора
