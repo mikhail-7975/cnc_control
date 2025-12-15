@@ -2154,17 +2154,19 @@ class MainWindowControllerV2(QMainWindow):
             print(f"Moving {axis} by {steps} mm")
             if axis == 'X':
                 current = float(self.ui.cur_x_label.text() or "0")
-                if current + steps <= 0:
+                if current + steps >= 0 and current + steps < 286:
                     self.driver.move_x_rel(int(steps))
                     self.ui.cur_x_label.setText(str(round(current + steps, 2)))
                 else:
-                    self.ui.cur_x_label.setText("0.0")
-                    self.driver.move_x(0)
                     print('Out of range axis X')
             elif axis == 'Y':
-                self.driver.move_y_rel(int(steps))
                 current = float(self.ui.cur_y_label.text() or "0")
-                self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+                if current + steps >= 0 and current + steps < 271:
+                    self.driver.move_y_rel(int(steps))
+                    self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+                else:
+                    print('Out of range axis Y')
+
         else:
             print('ERROR! Connect to CNC')
 
