@@ -37,7 +37,7 @@ from ui.generated.mainwindow_ui_v2 import Ui_MainWindow as Ui_MainWindowV2
 from cnc_control.core.cnc.drivers.grbl_driver import CncMachineDriver
 from cnc_control.core.camera.camera_reader import ThreadSafeCameraReader
 from cnc_control.utils import create_component_collage, save_component_crops, get_component_crop
-from cnc_control.core.algorithms import SiftImageAligner
+from cnc_control.core.utils.image_aligner import SiftImageAligner
 from cnc_control.core.algorithms.segmentation import (
     ImagePreprocessor,
     ComponentSegmenter,
