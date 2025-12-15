@@ -102,16 +102,10 @@ def test_etalon_preparation():
         crop_image = component_data['image']
         if crop_image is not None and crop_image.size > 0:
             try:
-                # Формируем имя файла: используем name из bbox, если есть, иначе component_id
-                bbox = component_data.get('bbox', {})
-                component_name = bbox.get('name', component_id)
-                photo_key = component_data.get('photo_key', '')
-                
-                # Создаем безопасное имя файла: photo_key_name.png
-                safe_name = str(component_name).replace('/', '_').replace('\\', '_')
-                safe_photo_key = str(photo_key).replace('/', '_').replace('\\', '_')
-                filename = f"{safe_photo_key}_{safe_name}.png"
-                save_path = save_dir / filename
+                # Формируем имя файла из component_id
+                # Если component_id содержит недопустимые символы, заменяем их
+                safe_component_id = str(component_id).replace('/', '_').replace('\\', '_')
+                save_path = save_dir / f"{safe_component_id}.png"
                 
                 # Сохраняем кроп
                 success = cv2.imwrite(str(save_path), crop_image)

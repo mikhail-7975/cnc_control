@@ -123,9 +123,9 @@ class SegmentationInspectionAlgorithm:
             iou_missing_check = iou < 0.5
             shifted_check = iou > 0.5 and iou < 0.65
             if control_angle:
-                control_angle_check = control_angle < 5
+                control_angle_check = abs(control_angle) > 5
             else:
-                control_angle_check = False
+                control_angle_check = None
         except:
             iou_missing_check = True
 
