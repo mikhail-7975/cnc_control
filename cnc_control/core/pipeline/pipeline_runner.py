@@ -1,10 +1,14 @@
 from cnc_control.core.pipeline.board_storage import BoardStorage
-from cnc_control.core.pipeline.utils import crop_by_bbox
+from cnc_control.core.utils.crop import crop_by_bbox
 
 class InspectionRunner():
     def __init__(self) -> None:
         self.board_storage = BoardStorage()
+        self.inspection_algorithms = {} # inspection_algorithm_name: AlgoritmClass()
         pass
+
+    def add_inspection_algorithm(self, inspector_name, inspector):
+        self.inspection_algorithms[inspector_name] = inspector
 
     def set_etalon_images(self, etalon_images_dict: dict):
         """
@@ -16,7 +20,6 @@ class InspectionRunner():
         self.board_storage.etalon_images = etalon_images_dict.copy()
 
     def set_etalon_markup(self, markup_json):
-        
         self.board_storage.etalon_markup = markup_json.copy()
 
     def prepare_etalon(self):
@@ -62,3 +65,6 @@ class InspectionRunner():
                     print(f"Создан кроп компонента {component_id} из {photo_key}")
                 else:
                     print(f"Предупреждение: не удалось создать кроп для компонента {component_id}")
+
+    def run_inspection(self):
+        pass
