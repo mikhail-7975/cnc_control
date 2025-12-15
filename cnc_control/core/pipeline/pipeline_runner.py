@@ -3,12 +3,17 @@ import json
 from cnc_control.core.pipeline.board_storage import BoardStorage
 from cnc_control.core.utils.crop import crop_by_bbox
 from cnc_control.core.utils.image_aligner import SiftImageAligner
+from cnc_control.core.algorithms.segmentation.segmentation_inspection import SegmentationInspectionAlgorithm
 
 class InspectionRunner():
     def __init__(self) -> None:
         self.board_storage = BoardStorage()
         self.img_aligner = SiftImageAligner()
-        self.inspection_algorithms = {} # inspection_algorithm_name: AlgoritmClass()
+        self.inspection_algorithms = {
+            "segmentation":SegmentationInspectionAlgorithm(
+                "data/extended_many_augs.pth"
+            )
+        } # inspection_algorithm_name: AlgoritmClass()
         self.etalon_control_mapping = None
         pass
 
@@ -190,4 +195,102 @@ class InspectionRunner():
                     print(f"Предупреждение: не удалось создать кроп для компонента {component_id}")
 
     def run_inspection(self):
-        pass
+        """
+        Запускает инспекцию компонентов:
+        1. Итерируется по кропам эталонных компонентов
+        2. Для каждого эталонного компонента находит соответствующие контрольные компоненты
+        3. Запускает алгоритм инспекции для каждой пары
+        4. Определяет результат инспекции (не дефект / подозрение на дефект / дефект)
+        5. Сохраняет результаты в board_storage.inspection_results
+        """
+        if not self.board_storage.etalon_components:
+            print("Предупреждение: нет эталонных компонентов для инспекции")
+            return
+        
+        if not self.board_storage.control_components:
+            print("Предупреждение: нет контрольных компонентов для инспекции")
+            return
+        
+        if not self.inspection_algorithms:
+            print("Предупреждение: нет алгоритмов инспекции")
+            return
+        
+        print("Запуск инспекции компонентов...")
+        inspection_count = 0
+        defect_count = 0
+        suspicion_count = 0
+        ok_count = 0
+        
+        # Итерируемся по эталонным компонентам
+        for num, (etalon_component_id, etalon_component_data) in enumerate(self.board_storage.etalon_components.items()):
+            print(num, etalon_component_id)
+            etalon_crop = etalon_component_data['image']
+            # etalon_photo_key = etalon_component_data['photo_key']
+            etalon_bbox = etalon_component_data.get('bbox', {})
+            
+            # Определяем алгоритм инспекции из разметки
+            algorithm_name = etalon_bbox.get('algorithm', 'segmentation')
+            
+            # Проверяем наличие алгоритма
+            if algorithm_name not in self.inspection_algorithms:
+                print(f"Предупреждение: алгоритм {algorithm_name} не найден, пропускаем компонент {etalon_component_id}")
+                continue
+            
+            inspection_algorithm = self.inspection_algorithms[algorithm_name]
+            
+            # Находим все контрольные компоненты, соответствующие этому эталонному
+            for control_component_id, control_component_data in self.board_storage.control_components.items():
+                if control_component_data['etalon_component_id'] != etalon_component_id:
+                    continue
+                
+                control_crop = control_component_data['image']
+                control_photo_key = control_component_data['photo_key']
+                
+                # Запускаем алгоритм инспекции
+                try:
+                    # Алгоритм возвращает кортеж (результат, (метрики и другая информация))
+                    # результат: 'не дефект', 'подозрение на дефект' или 'дефект'
+                    algorithm_result = inspection_algorithm(etalon_crop, control_crop)
+                    
+                    # Ожидаем формат: (result, metrics_tuple)
+                    if len(algorithm_result) >= 2:
+                        inspection_result = algorithm_result[0]
+                        metrics = algorithm_result[1]
+                    else:
+                        # Если алгоритм возвращает старый формат, обрабатываем как ошибку
+                        print(f"Предупреждение: алгоритм {algorithm_name} вернул неожиданный формат результата")
+                        continue
+                    
+                    # Формируем уникальный идентификатор для результата инспекции
+                    inspection_id = f"{etalon_component_id}_{control_component_id}"
+                    
+                    # Сохраняем результат инспекции
+                    self.board_storage.inspection_results[inspection_id] = {
+                        'result': inspection_result,
+                        'metrics': metrics,
+                        'etalon_component_id': etalon_component_id,
+                        'control_component_id': control_component_id,
+                        'algorithm': algorithm_name,
+                    }
+                    
+                    inspection_count += 1
+                    if inspection_result == 'дефект':
+                        defect_count += 1
+                    elif inspection_result == 'подозрение на дефект':
+                        suspicion_count += 1
+                    else:
+                        ok_count += 1
+                    
+                    if inspection_count <= 10:  # Показываем первые 10 для краткости
+                        print(f"  ✓ Инспекция {inspection_id}: {inspection_result}")
+                    
+                except Exception as e:
+                    print(f"Ошибка при инспекции {etalon_component_id} vs {control_component_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"\nИнспекция завершена:")
+        print(f"  - Всего проверок: {inspection_count}")
+        print(f"  - Не дефект: {ok_count}")
+        print(f"  - Подозрение на дефект: {suspicion_count}")
+        print(f"  - Дефект: {defect_count}")

@@ -118,10 +118,20 @@ class SegmentationInspectionAlgorithm:
         }
         
         result = "ok"
+        
+        try:
+            iou_missing_check = iou < 0.5
+            shifted_check = iou > 0.5 and iou < 0.65
+            if control_angle:
+                control_angle_check = control_angle < 5
+            else:
+                control_angle_check = False
+        except:
+            iou_missing_check = True
 
-        if iou < 0.5:
+        if iou_missing_check:
             result = "missing"
-        elif control_angle > 5 or iou < 0.65:
+        elif control_angle_check or shifted_check:
             result = "shifted"
         
         return result, (iou, center_distance, angle_diff, details)

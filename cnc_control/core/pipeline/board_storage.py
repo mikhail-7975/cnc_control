@@ -27,6 +27,15 @@ class BoardStorage():
         #   'bbox': dict,
         # }}
         self.control_components = {}
+        
+        # Словарь результатов инспекции: {inspection_id: {
+        #   'result': str,  # 'не дефект', 'подозрение на дефект', 'дефект'
+        #   'metrics': tuple,  # кортеж из метрик и другой информации
+        #   'etalon_component_id': str,
+        #   'control_component_id': str,
+        #   'algorithm': str,  # название использованного алгоритма
+        # }}
+        self.inspection_results = {}
 
         self.control_images = []
         self.control_crops = []
