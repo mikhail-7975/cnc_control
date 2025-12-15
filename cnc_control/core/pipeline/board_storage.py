@@ -16,6 +16,18 @@ class BoardStorage():
         # Разметка эталона: {photo_key: [bbox1, bbox2, ...]}
         self.etalon_markup = {}
 
+        # Словарь выровненных контрольных изображений: {img_id: image (numpy array BGR)}
+        # Структура аналогична etalon_images
+        self.aligned_control_images = {}
+        
+        # Словарь кропов компонентов контроля: {component_id: {
+        #   'image': np.ndarray,
+        #   'photo_key': str,  # идентификатор контрольного изображения
+        #   'etalon_component_id': str,  # идентификатор соответствующего эталонного компонента
+        #   'bbox': dict,
+        # }}
+        self.control_components = {}
+
         self.control_images = []
         self.control_crops = []
         self.control_ids = []
