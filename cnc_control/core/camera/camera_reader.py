@@ -62,7 +62,7 @@ class FisheyeUndistorter:
 # Thread-Safe Camera Reader (undistort in get_image)
 # -----------------------------
 class ThreadSafeCameraReader:
-    def __init__(self, camera_id=4, calibration_file=None, backend=None):
+    def __init__(self, camera_id=4, calibration_file=None, backend=None, res_mode = '1080', photo_mode = 'etalon'):
         """
         Initialize thread-safe camera reader.
         Undistortion (if any) is applied ONLY in get_image(), not in capture thread.
@@ -81,7 +81,7 @@ class ThreadSafeCameraReader:
         if backend is None:
             try:
                 # Try DirectShow first (more stable on Windows)
-                self.cap = cv2.VideoCapture(camera_id)
+                self.cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
                 if not self.cap.isOpened():
                     # Fallback to MSMF
                     self.cap = cv2.VideoCapture(camera_id, cv2.CAP_MSMF)
@@ -99,11 +99,17 @@ class ThreadSafeCameraReader:
         
         # Set codec
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-        
+        self.photo_mode = photo_mode
         # Set resolution and FPS
-        preferred_width = 8000
-        preferred_height = 6000
-        preferred_fps = 5
+        if res_mode == '1080':
+            preferred_width = 1920
+            preferred_height = 1080
+            preferred_fps = 30
+
+        else:
+            preferred_width = 8000
+            preferred_height = 6000
+            preferred_fps = 5
         
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, preferred_width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, preferred_height)
@@ -171,7 +177,7 @@ class ThreadSafeCameraReader:
             
             # Store frame with lock protection
             with self._frame_lock:
-                self._latest_raw_frame = frame.copy()
+                self._latest_raw_frame = frame
 
             time.sleep(0.001)  # optional: reduce CPU
 
@@ -182,20 +188,23 @@ class ThreadSafeCameraReader:
         Returns:
             np.ndarray or None: Undistorted (or raw) image, or None if not ready.
         """
-        with self._frame_lock:
-            if self._latest_raw_frame is None:
-                return None
-            frame = self._latest_raw_frame.copy()
+        # with self._frame_lock:
+        #     if self._latest_raw_frame is None:
+        #         return None
+        #     frame = self._latest_raw_frame.copy()
 
-        # Apply undistortion OUTSIDE the lock (to avoid holding lock during processing)
-        if self.undistorter is not None:
-            try:
-                frame = self.undistorter.undistort(frame)
-            except Exception as e:
-                print(f"❌ Undistortion failed in get_image(): {e}")
-                # Return raw frame if undistortion fails
-        
-        return frame
+        # # Apply undistortion OUTSIDE the lock (to avoid holding lock during processing)
+        # if self.undistorter is not None:
+        #     try:
+        #         frame = self.undistorter.undistort(frame)
+        #     except Exception as e:
+        #         print(f"❌ Undistortion failed in get_image(): {e}")
+        #         # Return raw frame if undistortion fails
+        h, w, _ = self._latest_raw_frame.shape
+        if self.photo_mode == 'etalon':
+            return self._latest_raw_frame[h//2-500:h//2+500, w//2-500:w//2+500]
+        else:
+            return self._latest_raw_frame[0:1080, 360:1560]
 
     def stop(self):
         """Stop background thread and release camera."""

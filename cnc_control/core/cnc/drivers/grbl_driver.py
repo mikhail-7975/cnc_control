@@ -37,7 +37,7 @@ class CncMachineDriver:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.home()
         time.sleep(1)
-        self._send_gcode("$H")
+        self._send_gcode("$X")
         self.close_serial_port()
 
     # --- Подключение ---
@@ -61,7 +61,7 @@ class CncMachineDriver:
     # --- Настройка GRBL ---
     def unlock(self):
         """Разблокировка GRBL"""
-        self._send_gcode("$H")
+        self._send_gcode("$X")
         self._log_response("GRBL Unlock")
 
     def set_units_and_mode(self):
@@ -71,19 +71,19 @@ class CncMachineDriver:
         self._log_response("Units = mm, Absolute mode")
 
     # --- Основные команды движения ---
-    def move_x(self, x_mm, speed=7000):
+    def move_x(self, x_mm, speed=1000):
         self._check_limits(x_mm, axis='X')
         command = f"G1 X{x_mm} F{speed}"
         self._execute_move(command)
         self.X = x_mm
 
-    def move_y(self, y_mm, speed=7000):
+    def move_y(self, y_mm, speed=1000):
         self._check_limits(y_mm, axis='Y')
         command = f"G1 Y{y_mm} F{speed}"
         self._execute_move(command)
         self.Y = y_mm
 
-    def move_xy(self, x_mm, y_mm, speed=7000):
+    def move_xy(self, x_mm, y_mm, speed=1000):
         self._check_limits(x_mm, axis='X')
         self._check_limits(y_mm, axis='Y')
         command = f"G1 X{x_mm} Y{y_mm} F{speed}"
@@ -91,7 +91,7 @@ class CncMachineDriver:
         self.X, self.Y = x_mm, y_mm
 
     # --- Относительное перемещение ---
-    def move_x_rel(self, dx_mm, speed=7000):
+    def move_x_rel(self, dx_mm, speed=1000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 X{dx_mm} F{speed}"
@@ -99,7 +99,7 @@ class CncMachineDriver:
         self.X += dx_mm
         self._send_gcode("G90")
 
-    def move_y_rel(self, dy_mm, speed=7000):
+    def move_y_rel(self, dy_mm, speed=1000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 Y{dy_mm} F{speed}"
@@ -107,7 +107,7 @@ class CncMachineDriver:
         self.Y += dy_mm
         self._send_gcode("G90")
 
-    def move_xy_rel(self, dx_mm, dy_mm, speed=7000):
+    def move_xy_rel(self, dx_mm, dy_mm, speed=1000):
         self._send_gcode("G21")
         self._send_gcode("G91")
         command = f"G1 X{dx_mm} Y{dy_mm} F{speed}"
@@ -119,7 +119,7 @@ class CncMachineDriver:
     # --- Домашнее положение ---
     def home(self):
         self._send_gcode("$H")
-        # self._wait_for_idle()
+        self._wait_for_idle()
         self.X, self.Y = 0, 0
 
     # --- Вспомогательные ---
@@ -135,7 +135,7 @@ class CncMachineDriver:
         self._wait_for_idle()
         self._log_response("Movement complete")
 
-    def _wait_for_idle(self, timeout=5):
+    def _wait_for_idle(self, timeout=30):
         start_time = time.time()
         while time.time() - start_time < timeout:
             self._send_gcode("?")
@@ -168,4 +168,3 @@ class CncMachineDriver:
         responses = self._read_response()
         for res in responses:
             self.logger.info(f"[RESP][{context}] {res}")
-

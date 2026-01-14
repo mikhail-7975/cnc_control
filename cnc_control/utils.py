@@ -29,7 +29,7 @@ def create_component_collage(etalon_image, control_image, bboxes, col, row, data
             return 0
         
         # Определяем размер сетки для коллажа
-        cols_per_row = min(4, num_components)  # Максимум 4 компонента в ряд
+        cols_per_row = min(10, num_components)  # Максимум 4 компонента в ряд
         rows_count = (num_components + cols_per_row - 1) // cols_per_row
         
         # Вычисляем размер каждого кропа (берем максимальный размер из всех bboxes)

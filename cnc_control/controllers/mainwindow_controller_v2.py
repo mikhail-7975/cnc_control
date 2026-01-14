@@ -8,11 +8,12 @@ MainWindow Controller V2
 """
 import sys
 import cv2
+import ast
 import time
 import json
 from pathlib import Path
 from datetime import datetime
-from PyQt6.QtWidgets import (
+from PyQt6.QtWidgets import (QPushButton,
     QMainWindow, QApplication, QLabel, QListWidget,
     QAbstractItemView, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog, QScrollArea,
     QAbstractItemView, QVBoxLayout, QFileDialog, QMessageBox, QWidget, QInputDialog
@@ -75,6 +76,21 @@ class MainWindowControllerV2(QMainWindow):
         self.image_label.setScaledContents(False)
         self.image_label.resize(self.ui.image_displayer.size())
         self.clear_image_display()
+        # === Button: Save image points to TXT ===
+        self.save_points_button = QPushButton("Сохранить точки")
+        self.save_points_button.setObjectName("save_points_button")
+
+        # Пытаемся добавить в layout рядом с add/delete, если layout есть.
+        buttons_parent = self.ui.add_point_button.parentWidget()
+        layout = buttons_parent.layout() if buttons_parent else None
+
+        if layout is not None:
+            layout.addWidget(self.save_points_button)
+        else:
+            # Если кнопки расставлены абсолютными координатами (без layout) — ставим ниже delete
+            self.save_points_button.setParent(self.ui.delete_point_button.parentWidget())
+            g = self.ui.delete_point_button.geometry()
+            self.save_points_button.setGeometry(g.x(), g.y() + g.height() + 6, g.width(), g.height())
 
         # CNC-related variables
         self.cnc_connected = False
@@ -116,6 +132,15 @@ class MainWindowControllerV2(QMainWindow):
 
         # Connect signals
         self.setup_connections()
+        # === Etalon capture state ===
+        self._etalon_capture_active = False
+        self._etalon_cam = None
+        self._etalon_keypoints = []
+        self._etalon_index = 0
+        self._etalon_curr_x = 0.0
+        self._etalon_curr_y = 0.0
+        self._etalon_out_dir = None
+        self._preview_was_on = False
 
     def setup_connections(self):
         # Camera
@@ -155,7 +180,9 @@ class MainWindowControllerV2(QMainWindow):
         # Coordinate list management
         self.ui.add_point_button.clicked.connect(self.add_image_point)
         self.ui.delete_point_button.clicked.connect(self.delete_selected_image_point)
-        
+        self.save_points_button.clicked.connect(self.save_image_points_to_file)
+
+
         # Etalon images management
         self.ui.load_etalon_images_button.clicked.connect(self.load_etalon_images)
         self.ui.next_etalonimage_button.clicked.connect(self.next_etalon_image)
@@ -165,6 +192,10 @@ class MainWindowControllerV2(QMainWindow):
         # Inspection buttons
         self.ui.load_control_photo_pushButton.clicked.connect(self.load_control_photo)
         self.ui.run_inspection_pushButton.clicked.connect(self.run_inspection)
+        btn = getattr(self.ui, 'take_etalon_images_button', None)
+        btn.clicked.connect(self.start_etalon_capture)
+        photo_control_btn = getattr(self.ui, 'take_control_photo_pushButton', None)
+        photo_control_btn.clicked.connect(self.start_control_capture)
 
     # === Coordinate list functionality ===
 
@@ -231,19 +262,46 @@ class MainWindowControllerV2(QMainWindow):
                 self.show_error(f"Ошибка при сохранении файла: {str(e)}")
 
     def save_image_points_to_file(self):
-        """Сохранить точки съёмки в файл."""
-        # TODO: Реализовать сохранение точек съёмки в файл
+        """Сохранить точки съёмки в TXT файл (по одной точке в строке: x<TAB>y)."""
+        if self.take_image_points_list.count() == 0:
+            self.show_error("Список точек съёмки пуст — нечего сохранять.")
+            return
+
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить точки съёмки", "", "JSON Files (*.json);;All Files (*)"
+            self,
+            "Сохранить точки съёмки",
+            "",
+            "Text Files (*.txt);;All Files (*)"
         )
-        if file_path:
-            try:
-                # Заглушка для реализации
-                print(f"Сохранение точек съёмки в файл: {file_path}")
-                # TODO: Реализовать сохранение списка точек в файл
-                self.show_error("Функция сохранения точек ещё не реализована")
-            except Exception as e:
-                self.show_error(f"Ошибка при сохранении файла: {str(e)}")
+        if not file_path:
+            return
+
+        try:
+            path = Path(file_path)
+            if path.suffix.lower() != ".txt":
+                path = path.with_suffix(".txt")
+
+            # Собираем точки из QListWidget
+            lines = []
+            pattern = re.compile(r'^\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)\s*$')
+            for i in range(self.take_image_points_list.count()):
+                text = self.take_image_points_list.item(i).text().strip()
+                m = pattern.match(text)
+                if m:
+                    x, y = m.group(1), m.group(2)
+                    lines.append(f"({x}, {y})")
+                else:
+                    # fallback: пишем как есть
+                    lines.append(text)
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+
+            QMessageBox.information(self, "Готово", f"Сохранено {len(lines)} точек в файл:\n{str(path)}")
+
+        except Exception as e:
+            self.show_error(f"Ошибка при сохранении точек: {str(e)}")
 
     def load_image_points_from_file(self):
         """Загрузить точки съёмки из файла."""
@@ -514,6 +572,72 @@ class MainWindowControllerV2(QMainWindow):
             self.marking_window.activateWindow()  # Активируем окно
         except Exception as e:
             self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
+
+    def start_etalon_capture(self):
+        ETALON_PATH = "C:\\Users\\nikgl\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\etalon"
+        if self.driver and self.cam:
+            with open("C:\\Users\\nikgl\\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\keypoints.txt", encoding="utf-8") as f:
+                lines = f.readlines()
+            places = []
+            pos_x = 0
+            pos_y = 0
+            for line in lines:
+                # print(line)
+                x, y = ast.literal_eval(line)
+                places.append((x, y))
+            for i, place in enumerate(places):
+                delation = 0.1
+                if i == 0 or i % 7 ==0  :
+                    delation = 5
+                if i != 0 and i % 7 ==0  :
+                    pos_x = 0
+                    pos_y += 1
+                print('moving to ', place[0], place[1])
+                self.driver.move_y(place[1]-50)
+                self.driver.move_x(place[0])
+                time.sleep(delation)        
+
+                frame = self.cam.get_image()
+                cv2.imwrite(ETALON_PATH + f'\\photo_{abs(pos_x)}_{abs(pos_y)}.png', frame)
+                pos_x += 1
+            self.driver.home()
+        else:
+            print('ERROR! Connect to CNC and camera')
+    def start_control_capture(self):
+        if self.cam:
+            self.cam.stop()
+            self.cam = ThreadSafeCameraReader(camera_id=1, photo_mode = 'control')
+
+        ETALON_PATH = "C:\\Users\\nikgl\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\control\\images"
+        if self.driver: 
+            with open("C:\\Users\\nikgl\\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\keypoints.txt", encoding="utf-8") as f:
+                lines = f.readlines()
+            places = []
+            pos_x = 0
+            pos_y = 0
+            for line in lines:
+                # print(line)
+                x, y = ast.literal_eval(line)
+                places.append((x, y))
+            for i, place in enumerate(places):
+                delation = 0.1
+                if i == 0 or i % 7 ==0  :
+                    delation = 5
+                if i != 0 and i % 7 ==0  :
+                    pos_x = 0
+                    pos_y += 1
+                print('moving to ', place[0], place[1])
+                self.driver.move_y(place[1]-50)
+                self.driver.move_x(place[0])
+                time.sleep(delation)        
+
+                frame = self.cam.get_image()
+                cv2.imwrite(ETALON_PATH + f'\\photo_{abs(pos_x)}_{abs(pos_y)}.png', frame)
+                pos_x += 1
+            self.driver.home()
+        else:
+            print('ERROR! Connect to CNC and camera')
+
 
     # === Inspection handlers ===
     
@@ -796,7 +920,7 @@ class MainWindowControllerV2(QMainWindow):
                     project_root / "data" / "plate_3" / "etalon_2" / "images",
                     project_root / "data" / "plate_3" / "etalon_2",
                     project_root / "data" / "plate_3" / "etalon" / "images",
-                    project_root / "data" / "plate_3" / "etalon",
+                    project_root / "plates" / "plate_4" / "etalon",
                 ]
                 
                 etalon_images_folder = None
@@ -950,6 +1074,7 @@ class MainWindowControllerV2(QMainWindow):
             saved_count = 0
             for mapping in mapping_data['mappings']:
                 etalon_indices = mapping.get('etalon_indices', [])
+                print(etalon_indices)
                 control_indices_groups = mapping.get('control_indices', [])
                 
                 if not etalon_indices or not control_indices_groups:
@@ -962,7 +1087,7 @@ class MainWindowControllerV2(QMainWindow):
                     project_root / "data" / "plate_3" / "etalon_2" / "images",
                     project_root / "data" / "plate_3" / "etalon_2",
                     project_root / "data" / "plate_3" / "etalon" / "images",
-                    project_root / "data" / "plate_3" / "etalon",
+                    project_root / "plates" / "plate_4" / "etalon",
                 ]
                 
                 etalon_images_folder = None
@@ -1075,10 +1200,10 @@ class MainWindowControllerV2(QMainWindow):
                             })
                         
                         # Создаем коллаж с кропами компонентов (контрольное изображение уже выровнено)
-                        # saved_count += save_component_crops(
-                        #     etalon_image, control_image, bboxes, col, row, 
-                        #     data_folder, photo_key
-                        # )
+                        saved_count += save_component_crops(
+                            etalon_image, control_image, bboxes, col, row, 
+                            data_folder, photo_key
+                        )
             
             # Выполняем сегментацию компонентов из списка component_crops
             if self.component_crops and segmenter is not None and postprocessor is not None and preprocessor is not None:
@@ -1352,14 +1477,12 @@ class MainWindowControllerV2(QMainWindow):
                 if current + steps <= 0:
                     self.driver.move_x_rel(int(steps))
                     self.ui.cur_x_label.setText(str(round(current + steps, 2)))
-                else:
-                    self.ui.cur_x_label.setText("0.0")
-                    self.driver.move_x(0)
-                    print('Out of range axis X')
             elif axis == 'Y':
-                self.driver.move_y_rel(int(steps))
                 current = float(self.ui.cur_y_label.text() or "0")
-                self.ui.cur_y_label.setText(str(round(current + steps, 2)))
+                if current + steps <= 0:
+                    self.driver.move_y_rel(int(steps))
+                    
+                    self.ui.cur_y_label.setText(str(round(current + steps, 2)))
         else:
             print('ERROR! Connect to CNC')
 
@@ -1393,6 +1516,7 @@ class MainWindowControllerV2(QMainWindow):
                 self.driver.open_serial_port()
                 self.driver.unlock()
                 self.driver.set_units_and_mode()
+                self.driver.home()
                 self.cnc_connected = True
                 self.ui.connect_cnc_button.setText("Отключить CNC")
                 print(f"Подключено к CNC на {port}")
