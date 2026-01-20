@@ -73,6 +73,7 @@ class ThreadSafeCameraReader:
             backend: cv2.CAP_DSHOW or cv2.CAP_MSMF (None for auto)
         """
         self.camera_id = camera_id
+        print(self.camera_id)
         self.undistorter = None
         if calibration_file is not None:
             self.undistorter = FisheyeUndistorter(calibration_file)
@@ -81,7 +82,7 @@ class ThreadSafeCameraReader:
         if backend is None:
             try:
                 # Try DirectShow first (more stable on Windows)
-                self.cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+                self.cap = cv2.VideoCapture(camera_id)
                 if not self.cap.isOpened():
                     # Fallback to MSMF
                     self.cap = cv2.VideoCapture(camera_id, cv2.CAP_MSMF)
@@ -96,7 +97,6 @@ class ThreadSafeCameraReader:
         
         # Set buffer size to reduce latency (helps with MSMF issues)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        
         # Set codec
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         self.photo_mode = photo_mode
@@ -114,7 +114,6 @@ class ThreadSafeCameraReader:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, preferred_width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, preferred_height)
         self.cap.set(cv2.CAP_PROP_FPS, preferred_fps)
-        
         # Allow camera to apply settings
         time.sleep(0.2)
         

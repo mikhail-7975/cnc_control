@@ -135,7 +135,7 @@ class CncMachineDriver:
         self._wait_for_idle()
         self._log_response("Movement complete")
 
-    def _wait_for_idle(self, timeout=30):
+    def _wait_for_idle(self, timeout=9999):
         start_time = time.time()
         while time.time() - start_time < timeout:
             self._send_gcode("?")

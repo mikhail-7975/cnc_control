@@ -616,6 +616,13 @@
             <widget class="QWidget" name="control_inspection_widget" native="true">
              <layout class="QHBoxLayout" name="horizontalLayout_11">
               <item>
+               <widget class="QPushButton" name="export_pdf_button">
+                <property name="text">
+                 <string>Экспорт в PDF</string>
+                </property>
+               </widget>
+              </item>
+              <item>
                <widget class="QPushButton" name="take_control_photo_pushButton">
                 <property name="text">
                  <string>Сделать фото</string>

@@ -6,6 +6,14 @@ MainWindow Controller V2
 
 Если имя класса UI отличается от Ui_MainWindowV2, измените импорт в начале файла.
 """
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+import cv2
+import tempfile
+import os
+from math import ceil, sqrt
+import numpy as np
 import sys
 import cv2
 import ast
@@ -196,6 +204,10 @@ class MainWindowControllerV2(QMainWindow):
         btn.clicked.connect(self.start_etalon_capture)
         photo_control_btn = getattr(self.ui, 'take_control_photo_pushButton', None)
         photo_control_btn.clicked.connect(self.start_control_capture)
+        import_pdf_btn = getattr(self.ui, 'import_pdf_pushButton', None)
+        import_pdf_btn.clicked.connect(self.export_to_pdf)
+
+
 
     # === Coordinate list functionality ===
 
@@ -574,9 +586,9 @@ class MainWindowControllerV2(QMainWindow):
             self.show_error(f"Ошибка при открытии окна разметки: {str(e)}")
 
     def start_etalon_capture(self):
-        ETALON_PATH = "C:\\Users\\nikgl\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\etalon"
+        ETALON_PATH = Path("plates", "plate_4", "etalon")
         if self.driver and self.cam:
-            with open("C:\\Users\\nikgl\\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\keypoints.txt", encoding="utf-8") as f:
+            with open(Path("plates","plate_4", "keypoints.txt"), encoding="utf-8") as f:
                 lines = f.readlines()
             places = []
             pos_x = 0
@@ -594,11 +606,11 @@ class MainWindowControllerV2(QMainWindow):
                     pos_y += 1
                 print('moving to ', place[0], place[1])
                 self.driver.move_y(place[1]-50)
-                self.driver.move_x(place[0])
+                self.driver.move_x(place[0]-50)
                 time.sleep(delation)        
 
                 frame = self.cam.get_image()
-                cv2.imwrite(ETALON_PATH + f'\\photo_{abs(pos_x)}_{abs(pos_y)}.png', frame)
+                cv2.imwrite(Path(ETALON_PATH, f'photo_{abs(pos_x)}_{abs(pos_y)}.png'), frame)
                 pos_x += 1
             self.driver.home()
         else:
@@ -606,11 +618,11 @@ class MainWindowControllerV2(QMainWindow):
     def start_control_capture(self):
         if self.cam:
             self.cam.stop()
-            self.cam = ThreadSafeCameraReader(camera_id=1, photo_mode = 'control')
+            self.cam = ThreadSafeCameraReader(camera_id=4, photo_mode = 'control')
 
-        ETALON_PATH = "C:\\Users\\nikgl\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\control\\images"
+        ETALON_PATH = Path("plates","plate_4", "control", "images")
         if self.driver: 
-            with open("C:\\Users\\nikgl\\Desktop\\neurolumber\\cnc_3\\cnc_control\\plates\\plate_4\\keypoints.txt", encoding="utf-8") as f:
+            with open(Path("plates", "plate_4", "keypoints.txt"), encoding="utf-8") as f:
                 lines = f.readlines()
             places = []
             pos_x = 0
@@ -628,11 +640,11 @@ class MainWindowControllerV2(QMainWindow):
                     pos_y += 1
                 print('moving to ', place[0], place[1])
                 self.driver.move_y(place[1]-50)
-                self.driver.move_x(place[0])
+                self.driver.move_x(place[0]-50)
                 time.sleep(delation)        
 
                 frame = self.cam.get_image()
-                cv2.imwrite(ETALON_PATH + f'\\photo_{abs(pos_x)}_{abs(pos_y)}.png', frame)
+                cv2.imwrite(Path(ETALON_PATH , f'photo_{abs(pos_x)}_{abs(pos_y)}.png'), frame)
                 pos_x += 1
             self.driver.home()
         else:
@@ -641,6 +653,80 @@ class MainWindowControllerV2(QMainWindow):
 
     # === Inspection handlers ===
     
+    def export_to_pdf(self):
+        if not self.images_data:
+            self.show_error("Нет изображений для экспорта.")
+            return
+
+        # Диалог сохранения
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить как PDF", "", "PDF Files (*.pdf);;All Files (*)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith('.pdf'):
+            file_path += '.pdf'
+
+        try:
+            # Определяем размеры сетки по данным
+            rows = max(img[0] for img in self.images_data) + 1  # row от 0 → +1
+            cols = max(img[1] for img in self.images_data) + 1  # col от 0 → +1
+            max_col = cols - 1
+            # Предполагаем, что все изображения одного размера
+            sample_img = self.images_data[0][3]
+            h, w = sample_img.shape[:2]
+
+            # Создаём пустую мозаику
+            mosaic_h = rows * h
+            mosaic_w = cols * w
+            mosaic = np.full((mosaic_h, mosaic_w, 3), 255, dtype=np.uint8)  # белый фон
+
+            # Заполняем мозаику по координатам (row, col)
+            for row, col, _, img in self.images_data:
+                # В Qt: row=0 — верх, но в ваших данных row=0 — **низ**?
+                # Однако в display_control_images вы делаете: grid_row = max_row - row
+                # Но для PDF логичнее сохранить **исходный порядок**: row=0 → сверху
+                # Если хотите "как на экране", замените на: r = rows - 1 - row
+                r = row  # ← если row=0 — верх (логично для PDF)
+                c = max_col - col 
+                mosaic[r * h:(r + 1) * h, c * w:(c + 1) * w] = img
+
+            # Сохраняем мозаику во временный файл
+            with tempfile.TemporaryDirectory() as tmpdir:
+                mosaic_path = os.path.join(tmpdir, "inspection_mosaic.png")
+                cv2.imwrite(mosaic_path, mosaic)
+
+                # Определяем ориентацию А4
+                page_width, page_height = A4
+                if mosaic_w > mosaic_h:
+                    page_width, page_height = landscape(A4)
+
+                margin = 42  # ~15 мм в pt
+                usable_w = page_width - 2 * margin
+                usable_h = page_height - 2 * margin
+
+                scale_x = usable_w / mosaic_w
+                scale_y = usable_h / mosaic_h
+                scale = min(scale_x, scale_y, 1.0)
+
+                draw_w = mosaic_w * scale
+                draw_h = mosaic_h * scale
+
+                x = (page_width - draw_w) / 2
+                y = (page_height - draw_h) / 2
+
+                # Создаём PDF
+                c = canvas.Canvas(file_path, pagesize=(page_width, page_height))
+                c.drawImage(ImageReader(mosaic_path), x, y, width=draw_w, height=draw_h)
+                c.save()
+
+            QMessageBox.information(self, "Готово", f"PDF успешно сохранён:\n{file_path}")
+
+        except Exception as e:
+            self.show_error(f"Ошибка при создании PDF: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def load_control_photo(self):
         """Обработчик нажатия на кнопку 'Загрузить контрольное изображение'."""
         # Открываем диалог выбора папки
@@ -816,9 +902,11 @@ class MainWindowControllerV2(QMainWindow):
             
             # Добавляем в сетку: инвертируем row для отображения снизу вверх
             # row=0 (низ) должен быть в позиции max_row, row=max_row (верх) должен быть в позиции 0
-            grid_row = max_row - row
-            grid_layout_widget.addWidget(label, grid_row, col)
-        
+            # grid_row = max_row - row
+            # grid_layout_widget.addWidget(label, grid_row, col)
+            grid_row = row
+            display_col = max_col - col
+            grid_layout_widget.addWidget(label, grid_row, display_col)
         scroll_area.setWidget(scroll_widget)
         
         # Создаем новый layout для photo_widget
@@ -826,7 +914,7 @@ class MainWindowControllerV2(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(scroll_area)
         photo_widget.setLayout(main_layout)
-        
+
         print(f"Загружено {len(self.images_data)} изображений в сетку {max_row + 1}x{max_col + 1}")
     
     def _update_existing_images(self, grid_layout, max_row, max_col):
@@ -845,10 +933,13 @@ class MainWindowControllerV2(QMainWindow):
         
         # Проходим по всем позициям в grid_layout и обновляем изображения
         for row, col, file_path, image in self.images_data:
-            grid_row = max_row - row
-            
+            # grid_row = max_row - row
+            grid_row = row
+
             # Находим существующий QLabel в этой позиции
-            item = grid_layout.itemAtPosition(grid_row, col)
+            display_col = max_col - col
+
+            item = grid_layout.itemAtPosition(grid_row, display_col)
             if item and item.widget():
                 label = item.widget()
                 if isinstance(label, QLabel):
@@ -886,7 +977,6 @@ class MainWindowControllerV2(QMainWindow):
             
             with open(mapping_file, 'r', encoding='utf-8') as f:
                 mapping_data = json.load(f)
-            
             if 'mappings' not in mapping_data or not mapping_data['mappings']:
                 print("Предупреждение: файл маппинга не содержит данных, выравнивание пропущено")
                 return
@@ -1050,7 +1140,7 @@ class MainWindowControllerV2(QMainWindow):
                 try:
                     segmenter = ComponentSegmenter(
                         model_path=str(model_path),
-                        device='cuda',  # Можно изменить на 'cuda' если доступна GPU
+                        device='cpu',  # Можно изменить на 'cuda' если доступна GPU
                         input_size=(224, 224)
                     )
                     postprocessor = MaskPostprocessor(
@@ -1408,6 +1498,7 @@ class MainWindowControllerV2(QMainWindow):
             port_text = self.ui.camera_port_lineEdit.text()
             try:
                 port = int(port_text) if port_text.isdigit() else port_text
+                print(port)
                 self.cam = ThreadSafeCameraReader(camera_id=port)
                 self.timer.start(200)
                 self.ui.connect_camera_button.setText("Отключить камеру")

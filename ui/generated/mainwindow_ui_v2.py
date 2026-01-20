@@ -286,6 +286,10 @@ class Ui_MainWindow(object):
         self.run_inspection_pushButton = QtWidgets.QPushButton(parent=self.control_inspection_widget)
         self.run_inspection_pushButton.setObjectName("run_inspection_pushButton")
         self.horizontalLayout_11.addWidget(self.run_inspection_pushButton)
+        self.import_pdf_pushButton = QtWidgets.QPushButton(parent=self.control_inspection_widget)
+        self.import_pdf_pushButton.setObjectName("import_pdf_pushButton")
+        self.horizontalLayout_11.addWidget(self.import_pdf_pushButton)
+
         self.verticalLayout_10.addWidget(self.control_inspection_widget)
         self.results_visualization_tabWidget = QtWidgets.QTabWidget(parent=self.component_schema_groupbox)
         self.results_visualization_tabWidget.setObjectName("results_visualization_tabWidget")
@@ -420,6 +424,9 @@ class Ui_MainWindow(object):
         self.save_control_photo_pushButton.setText(_translate("MainWindow", "Сохранить"))
         self.load_control_photo_pushButton.setText(_translate("MainWindow", "Загрузить"))
         self.run_inspection_pushButton.setText(_translate("MainWindow", "Запустить инспекцию"))
+        self.import_pdf_pushButton.setText(_translate("MainWindow", "Экспорт в пдф"))
+
+
         self.results_visualization_tabWidget.setTabText(self.results_visualization_tabWidget.indexOf(self.schema_tab), _translate("MainWindow", "Схема расстановки"))
         self.results_visualization_tabWidget.setTabText(self.results_visualization_tabWidget.indexOf(self.photo_tab), _translate("MainWindow", "Фотографии"))
         self.control_image_groupbox.setTitle(_translate("MainWindow", "Просмотр изображений"))
